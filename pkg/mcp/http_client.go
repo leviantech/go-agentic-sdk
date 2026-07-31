@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
+	"github.com/leviantech/go-agentic-sdk/pkg/trace"
 )
 
 // HTTPClient is an MCP client using the streamable HTTP transport
@@ -28,6 +29,11 @@ type HTTPClient struct {
 	url    string
 	apiKey string
 	client *http.Client
+
+	// tracer instruments every HTTP request to the MCP server as a span
+	// named "mcp.http.request" (zero-dependency trace.Tracer; defaults
+	// to noop). The spans include the server URL and JSON-RPC method.
+	tracer trace.Tracer
 
 	mu      sync.Mutex
 	nextID  int
@@ -45,12 +51,24 @@ func NewHTTPClient(url string) *HTTPClient {
 		// deadline is applied in call when the caller provides none).
 		client:  &http.Client{},
 		pending: map[int]chan rpcMessage{},
+		tracer:  trace.NoopTracer{},
 	}
 }
 
 // WithAPIKey sets the Authorization: Bearer header (optional).
 func (h *HTTPClient) WithAPIKey(key string) *HTTPClient {
 	h.apiKey = key
+	return h
+}
+
+// WithTracer instruments the HTTP transport. Every JSON-RPC exchange
+// (initialize, tools/list, tools/call, notify, session close) becomes a
+// span named mcp.http.request with method + server URL attributes.
+// The returned context carries the span for child spans on the response.
+func (h *HTTPClient) WithTracer(t trace.Tracer) *HTTPClient {
+	if t != nil {
+		h.tracer = t
+	}
 	return h
 }
 
@@ -80,20 +98,35 @@ func (h *HTTPClient) Close() error {
 	if h.session != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.url, nil)
-		if err == nil {
-			req.Header.Set("Mcp-Session-Id", h.session)
-			if h.apiKey != "" {
-				req.Header.Set("Authorization", "Bearer "+h.apiKey)
-			}
-			resp, err := h.client.Do(req)
-			if err == nil {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
-			}
+		if resp, err := h.doDelete(ctx); err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
 		}
 	}
 	return nil
+}
+
+// doDelete issues the session-terminating DELETE request. It is traced
+// like the POST path so the full session lifecycle shows up in traces.
+func (h *HTTPClient) doDelete(ctx context.Context) (*http.Response, error) {
+	_, span := h.tracer.Start(ctx, "mcp.http.request")
+	span.SetAttribute("mcp.method", "DELETE")
+	span.SetAttribute("mcp.server_url", h.url)
+	defer span.End()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.url, nil)
+	if err != nil {
+		span.SetAttribute("error", err.Error())
+		return nil, err
+	}
+	req.Header.Set("Mcp-Session-Id", h.session)
+	if h.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.apiKey)
+	}
+	resp, err := h.client.Do(req)
+	if err != nil {
+		span.SetAttribute("error", err.Error())
+	}
+	return resp, err
 }
 
 // ListTools returns the tools exposed by the server.
@@ -184,6 +217,22 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 // accumulated; progress notifications are skipped. Without onChunk the
 // behaviour is identical to call.
 func (h *HTTPClient) callStream(ctx context.Context, method string, params any, onChunk func(string)) (json.RawMessage, error) {
+	// Wrap this exchange in a span so every JSON-RPC call shows up in
+	// OTel/Langfuse/console traces as an mcp.http.request child span.
+	ctx, span := h.tracer.Start(ctx, "mcp.http.request")
+	span.SetAttribute("mcp.method", method)
+	span.SetAttribute("mcp.server_url", h.url)
+	result, err := h.callStreamInner(ctx, method, params, onChunk)
+	if err != nil {
+		span.SetAttribute("error", err.Error())
+	}
+	span.End()
+	return result, err
+}
+
+// callStreamInner is the original callStream implementation (span-free)
+// called via callStream which wraps it.
+func (h *HTTPClient) callStreamInner(ctx context.Context, method string, params any, onChunk func(string)) (json.RawMessage, error) {
 	// Guard against callers that pass a bare context: without a deadline a
 	// stuck server would block forever now that the client has no fixed
 	// timeout (required for long SSE streams).
@@ -393,6 +442,8 @@ func (h *HTTPClient) doRequest(ctx context.Context, data []byte, session string)
 }
 
 // notify sends a JSON-RPC notification (no id) and drains the response.
+// The notification gets its own span (callStream covers the call path;
+// this covers notifications such as notifications/initialized).
 func (h *HTTPClient) notify(method string, params any) {
 	data, err := json.Marshal(rpcNotification{JSONRPC: "2.0", Method: method, Params: params})
 	if err != nil {
@@ -405,25 +456,18 @@ func (h *HTTPClient) notify(method string, params any) {
 	}
 	session := h.session
 	h.mu.Unlock()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(data))
+	_, span := h.tracer.Start(ctx, "mcp.http.request")
+	span.SetAttribute("mcp.method", method)
+	span.SetAttribute("mcp.server_url", h.url)
+	resp, err := h.doRequest(ctx, data, session)
 	if err != nil {
+		span.SetAttribute("error", err.Error())
+		span.End()
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if h.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+h.apiKey)
-	}
-	if session != "" {
-		req.Header.Set("Mcp-Session-Id", session)
-	}
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return
-	}
+	span.End()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 }

@@ -391,7 +391,6 @@ Next:
 - ✅ **Tracing** — minimal `trace.Tracer`/`Span` interface, console (JSON lines) + noop impls, wired into agent runs
 - ✅ **OpenTelemetry adapter** — `trace/otel` package; OTel spans for agent.run / llm.step / tool.call
 - ✅ **Langfuse adapter** — `trace/langfuse` package; dependency-free REST ingestion (trace/span/generation events, batched + background flush)
+- ✅ **MCP HTTP client tracing** — `WithTracer()` on `HTTPClient`; every JSON-RPC exchange (initialize, tools/list, tools/call, notify, DELETE) creates an `mcp.http.request` span with method + server URL attributes; works with OTel, Langfuse, console, or noop
 
 Future:
-
-- OpenTelemetry instrumentation for MCP HTTP client (HTTP client spans)
