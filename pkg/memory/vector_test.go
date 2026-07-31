@@ -52,6 +52,23 @@ func TestMemVectorStoreSearch(t *testing.T) {
 	}
 }
 
+// TestVectorMemoryUniqueOverflowIDs: overflowing the window twice must
+// store BOTH batches. Reusing a fixed per-batch counter produced duplicate
+// ids and silently dropped every overflow after the first.
+func TestVectorMemoryUniqueOverflowIDs(t *testing.T) {
+	store := NewMemVectorStore()
+	vm := NewVectorMemory(fakeEmbedder{}, store, 1, 1)
+	for i := 0; i < 4; i++ {
+		vm.Add(llm.Message{Role: llm.RoleUser, Content: "pesan unik nomor " + string(rune('a'+i))})
+	}
+	vm.mu.Lock()
+	n := len(store.items)
+	vm.mu.Unlock()
+	if n != 3 {
+		t.Fatalf("expected 3 stored vectors after 3 overflows, got %d", n)
+	}
+}
+
 func TestVectorMemoryInjectsRelevant(t *testing.T) {
 	vm := NewVectorMemory(fakeEmbedder{}, NewMemVectorStore(), 2, 1)
 

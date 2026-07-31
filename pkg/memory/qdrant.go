@@ -54,7 +54,7 @@ func idToUint(id string) uint64 {
 	return h.Sum64()
 }
 
-func (q *QdrantStore) Add(_ context.Context, id string, vector []float32, meta map[string]string) error {
+func (q *QdrantStore) Add(ctx context.Context, id string, vector []float32, meta map[string]string) error {
 	// Qdrant point ids are uint64 or UUID strings; store the original id
 	// in the payload so Search can return it.
 	payload := map[string]any{"meta": meta, "orig_id": id}
@@ -69,7 +69,7 @@ func (q *QdrantStore) Add(_ context.Context, id string, vector []float32, meta m
 		return err
 	}
 	url := q.baseURL + "collections/" + q.collection + "/points?wait=true"
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

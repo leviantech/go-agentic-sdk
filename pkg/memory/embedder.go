@@ -36,7 +36,7 @@ func NewOpenAIEmbedder(apiKey, model string) *OpenAIEmbedder {
 // 9router: http://localhost:20128/v1 (9router supports /v1/embeddings)
 func (e *OpenAIEmbedder) WithBaseURL(u string) *OpenAIEmbedder {
 	if u != "" {
-		e.BaseURL = u
+		e.BaseURL = strings.TrimSuffix(u, "/")
 	}
 	return e
 }

@@ -81,7 +81,8 @@ func (s *consoleSpan) End() {
 		return
 	}
 	s.done = true
-	ev := map[string]any{"name": s.name, "ts": s.t.now(), "end": true, "duration_ms": s.t.now().Sub(s.start).Milliseconds()}
+	now := s.t.now()
+	ev := map[string]any{"name": s.name, "ts": now, "end": true, "duration_ms": now.Sub(s.start).Milliseconds()}
 	if len(s.attrs) > 0 {
 		ev["attrs"] = s.attrs
 	}

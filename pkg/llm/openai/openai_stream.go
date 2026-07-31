@@ -18,8 +18,12 @@ func (c *Client) ChatStream(ctx context.Context, messages []llm.Message, tools [
 	payload := map[string]any{
 		"model":    c.cfg.Model,
 		"messages": mapMessages(messages),
-		"tools":    mapTools(tools),
 		"stream":   true,
+	}
+	// Only send the tools key when tools exist: several OpenAI-compatible
+	// gateways reject an explicit empty array (or change behavior).
+	if len(tools) > 0 {
+		payload["tools"] = mapTools(tools)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

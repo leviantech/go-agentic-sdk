@@ -106,7 +106,37 @@ func TestSkillWithoutFrontmatter(t *testing.T) {
 	}
 }
 
-// TestRunScriptRejectsSymlink: a script that is a symlink must be refused
+// TestRunScriptCapsStderr: a script flooding stderr must not grow an
+// unbounded buffer (memory exhaustion via stderr alone).
+func TestRunScriptCapsStderr(t *testing.T) {
+	root := t.TempDir()
+	// ~2 MiB of stderr — well above MaxScriptOutputBytes (1 MiB)
+	script := "#!/bin/sh\ni=0\nwhile [ $i -lt 2000 ]; do echo 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' >&2; i=$((i+1)); done\nexit 0\n"
+	if err := writeFile(root+"/SKILL.md", `---
+name: noisy
+version: 1.0.0
+tools:
+  - name: noisy
+    description: noisy
+    command: scripts/noise.sh
+---`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root+"/scripts", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(root+"/scripts/noise.sh", script); err != nil {
+		t.Fatal(err)
+	}
+	sk, err := LoadSkill(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sk.RunScript(context.Background(), "scripts/noise.sh", nil); err == nil {
+		t.Fatal("stderr overflow must surface as an error")
+	}
+}
+
 // even if the link lives inside the skill root (its target may point
 // outside, bypassing containment).
 func TestRunScriptRejectsSymlink(t *testing.T) {

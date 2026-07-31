@@ -24,6 +24,7 @@ type VectorMemory struct {
 	recent    []llm.Message // last N messages verbatim
 	recentMax int
 	k         int
+	seq       uint64 // monotonic vector-id counter (keeps ids unique)
 }
 
 func NewVectorMemory(embedder Embedder, store VectorStore, recentMax, k int) *VectorMemory {
@@ -49,7 +50,7 @@ func (m *VectorMemory) Add(msg llm.Message) {
 		// move messages that fall out of the window into the vector store
 		overflow := m.recent[:len(m.recent)-m.recentMax]
 		m.recent = m.recent[len(m.recent)-m.recentMax:]
-		for i, old := range overflow {
+		for _, old := range overflow {
 			if old.Content == "" {
 				continue
 			}
@@ -57,7 +58,12 @@ func (m *VectorMemory) Add(msg llm.Message) {
 			if err != nil {
 				continue
 			}
-			_ = m.store.Add(context.Background(), fmt.Sprintf("msg-%p-%d", m, i), vec, map[string]string{"content": old.Content})
+			m.seq++
+			// Unique id per stored message: reusing a fixed counter would
+			// collide with previously stored vectors (stores reject dup
+			// ids) and silently drop older messages.
+			id := fmt.Sprintf("msg-%p-%d", m, m.seq)
+			_ = m.store.Add(context.Background(), id, vec, map[string]string{"content": old.Content})
 		}
 	}
 }

@@ -157,7 +157,9 @@ func (s *Skill) RunScript(ctx context.Context, command string, args map[string]a
 	cmd.Stdin = bytes.NewReader(argJSON)
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &out, max: MaxScriptOutputBytes}
-	cmd.Stderr = &errBuf
+	// stderr is capped too: an unbounded buffer here would let a skill
+	// exhaust memory via stderr alone.
+	cmd.Stderr = &limitedWriter{w: &errBuf, max: MaxScriptOutputBytes}
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("script %s failed: %w (stderr: %s)",
 			command, err, strings.TrimSpace(errBuf.String()))
