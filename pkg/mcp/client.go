@@ -58,12 +58,31 @@ type rpcMessage struct {
 	Error  *rpcError       `json:"error"`
 }
 
+// syncBuffer is a concurrency-safe bytes.Buffer: os/exec writes the
+// server's stderr from its own goroutine while Stderr() reads it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 // Client is a stdio MCP client wrapping a subprocess.
 type Client struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	out    *bufio.Reader
-	stderr *bytes.Buffer
+	stderr *syncBuffer
 
 	mu      sync.Mutex
 	nextID  int
@@ -109,8 +128,8 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 	c.stdin = in
 	c.out = bufio.NewReader(out)
-	c.stderr = &bytes.Buffer{}
-	c.cmd.Stderr = c.stderr
+	c.stderr = &syncBuffer{}
+	c.cmd.Stderr = c.stderr // syncBuffer implements io.Writer
 
 	if err := c.cmd.Start(); err != nil {
 		return fmt.Errorf("start mcp server %q: %w (stderr: %s)",

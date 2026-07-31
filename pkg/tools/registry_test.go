@@ -36,11 +36,25 @@ newline`
 
 func TestRegisterDupError(t *testing.T) {
 	r := NewRegistry()
-	if err := r.Register(&FuncTool{N: "a"}); err != nil {
+	dummy := func(_ context.Context, _ map[string]any) (string, error) { return "", nil }
+	if err := r.Register(&FuncTool{N: "a", F: dummy}); err != nil {
 		t.Fatalf("first register: %v", err)
 	}
-	if err := r.Register(&FuncTool{N: "a"}); err == nil {
+	if err := r.Register(&FuncTool{N: "a", F: dummy}); err == nil {
 		t.Fatal("registering a duplicate name must error")
+	}
+}
+
+func TestRegisterGuards(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Register(nil); err == nil {
+		t.Fatal("nil tool must error")
+	}
+	if err := r.Register(&FuncTool{N: "empty-fn"}); err == nil {
+		t.Fatal("nil callback must error")
+	}
+	if err := r.Register(&FuncTool{N: ""}); err == nil {
+		t.Fatal("empty name must error")
 	}
 }
 

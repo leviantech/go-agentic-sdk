@@ -102,7 +102,15 @@ func (a *Agent) RunStream(ctx context.Context, userInput string) (<-chan Event, 
 	ch := make(chan Event, 16)
 	go func() {
 		defer close(ch)
-		_, _ = a.runOnce(ctx, userInput, func(e Event) { ch <- e })
+		emit := func(e Event) {
+			select {
+			case ch <- e:
+			case <-ctx.Done():
+				// Caller stopped draining / run cancelled: do not block
+				// the goroutine forever (close(ch) must still run).
+			}
+		}
+		_, _ = a.runOnce(ctx, userInput, emit)
 	}()
 	return ch, nil
 }

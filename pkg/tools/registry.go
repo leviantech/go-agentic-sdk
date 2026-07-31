@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -48,14 +49,25 @@ func NewRegistry() *Registry {
 	return &Registry{tools: map[string]Tool{}}
 }
 
-// Register adds a tool; errors if the name is already registered.
+// Register adds a tool; errors if the name is already registered or the
+// tool is unusable (nil, empty name, nil FuncTool callback).
 func (r *Registry) Register(t Tool) error {
+	if t == nil {
+		return errors.New("tool is nil")
+	}
+	name := t.Name()
+	if name == "" {
+		return errors.New("tool has an empty name")
+	}
+	if ft, ok := t.(*FuncTool); ok && ft.F == nil {
+		return fmt.Errorf("tool %q has a nil callback", name)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.tools[t.Name()]; ok {
-		return fmt.Errorf("tool %q is already registered", t.Name())
+	if _, ok := r.tools[name]; ok {
+		return fmt.Errorf("tool %q is already registered", name)
 	}
-	r.tools[t.Name()] = t
+	r.tools[name] = t
 	return nil
 }
 

@@ -120,8 +120,9 @@ func (h *HTTPClient) CallTool(ctx context.Context, name string, args map[string]
 // (_meta.streaming per the 2025-06-18 spec). When the server streams,
 // partial text content is delivered to onChunk as it arrives (multiple
 // chunks per call are possible); the accumulated result is returned.
-// Servers without streaming support are handled via the normal
-// single-response path (onChunk is then called once).
+// Servers that ignore the streaming hint and answer with a single JSON
+// response are handled transparently (onChunk is never called in that
+// case; the full result is returned).
 func (h *HTTPClient) StreamCall(ctx context.Context, name string, args map[string]any, onChunk func(string)) (string, error) {
 	params := map[string]any{"name": name, "arguments": args}
 	if onChunk != nil {

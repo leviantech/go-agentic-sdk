@@ -66,6 +66,9 @@ func serveFakeMCPServer() {
 			result = map[string]any{
 				"content": []any{map[string]any{"type": "text", "text": "echo: " + text}},
 			}
+			// Diagnostic noise: exercises the concurrent stderr path read by
+			// Stderr()/Start() (race detector verifies the syncBuffer lock).
+			fmt.Fprintln(os.Stderr, "tool-call:", req.Method)
 		default:
 			result = map[string]any{}
 		}
