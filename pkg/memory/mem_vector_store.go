@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"math"
 	"sort"
 	"sync"
@@ -26,7 +27,7 @@ func NewMemVectorStore() *MemVectorStore {
 	return &MemVectorStore{ids: map[string]bool{}}
 }
 
-func (s *MemVectorStore) Add(id string, vector []float32, meta map[string]string) error {
+func (s *MemVectorStore) Add(_ context.Context, id string, vector []float32, meta map[string]string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ids[id] {
@@ -37,7 +38,7 @@ func (s *MemVectorStore) Add(id string, vector []float32, meta map[string]string
 	return nil
 }
 
-func (s *MemVectorStore) Search(vector []float32, k int) ([]VectorHit, error) {
+func (s *MemVectorStore) Search(_ context.Context, vector []float32, k int) ([]VectorHit, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if k <= 0 {

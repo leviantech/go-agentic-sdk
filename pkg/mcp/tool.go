@@ -6,11 +6,16 @@ import (
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
 )
 
+// toolCaller abstracts the two transports (stdio, HTTP) behind one call.
+type toolCaller interface {
+	CallTool(ctx context.Context, name string, args map[string]any) (string, error)
+}
+
 // mcpTool adapts an MCP server tool into a tools.Tool.
 // The registered name may carry a server prefix; the underlying MCP
 // method name is preserved for the actual call.
 type mcpTool struct {
-	client *Client
+	caller toolCaller
 	method string
 	name   string
 	desc   string
@@ -26,7 +31,7 @@ func (t *mcpTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 func (t *mcpTool) Execute(ctx context.Context, args map[string]any) (string, error) {
-	return t.client.CallTool(ctx, t.method, args)
+	return t.caller.CallTool(ctx, t.method, args)
 }
 
 var _ tools.Tool = (*mcpTool)(nil)

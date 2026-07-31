@@ -19,6 +19,7 @@ import (
 	"github.com/leviantech/go-agentic-sdk/pkg/skills"
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
 	"github.com/leviantech/go-agentic-sdk/pkg/tools/builtin"
+	"github.com/leviantech/go-agentic-sdk/pkg/trace"
 )
 
 func main() {
@@ -28,6 +29,7 @@ func main() {
 		skillssh   = flag.String("skillssh", "", "skills.sh reference (owner/repo/skill or https://www.skills.sh/...)")
 		installdir = flag.String("installdir", "installed-skills", "directory where skills are installed")
 		chatMode   = flag.Bool("chat", false, "interactive chat mode")
+		traceFlag  = flag.Bool("trace", false, "print span traces to stderr")
 	)
 	flag.Parse()
 
@@ -120,7 +122,7 @@ func main() {
 	}
 	systemPrompt := mgr.BuildSystemPrompt(basePrompt)
 
-	a, err := agent.NewAgent(
+	opts := []agent.Option{
 		agent.WithName(agentName(ac)),
 		agent.WithLLM(openai.NewClient(openai.Config{
 			APIKey:  cfg.LLM.APIKey,
@@ -131,7 +133,11 @@ func main() {
 		agent.WithTools(reg.List()...),
 		agent.WithSystemPrompt(systemPrompt),
 		agent.WithMaxIterations(maxIter(ac)),
-	)
+	}
+	if *traceFlag {
+		opts = append(opts, agent.WithTracer(trace.NewConsole(os.Stderr)))
+	}
+	a, err := agent.NewAgent(opts...)
 	if err != nil {
 		log.Fatalf("agent: %v", err)
 	}

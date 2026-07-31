@@ -9,11 +9,11 @@ type Embedder interface {
 }
 
 // VectorStore is a semantic index. Implementations: in-memory
-// (MemVectorStore), pgvector, Qdrant, etc.
+// (MemVectorStore), Qdrant, pgvector, etc.
 type VectorStore interface {
-	Add(id string, vector []float32, meta map[string]string) error
+	Add(ctx context.Context, id string, vector []float32, meta map[string]string) error
 	// Search returns the k nearest neighbors of vector (cosine similarity).
-	Search(vector []float32, k int) ([]VectorHit, error)
+	Search(ctx context.Context, vector []float32, k int) ([]VectorHit, error)
 }
 
 // VectorHit is one search result.

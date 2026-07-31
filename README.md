@@ -153,6 +153,23 @@ a, _ = agent.NewAgent(
 )
 ```
 
+### Tracing
+
+Attach a tracer to get span timing for each `agent.run`, `llm.step` and
+`tool.call`:
+
+```go
+tr := trace.NewConsole(os.Stderr) // JSON lines; or trace.NoopTracer{} to discard
+a, _ := agent.NewAgent(
+    agent.WithLLM(...),
+    agent.WithTracer(tr),
+)
+```
+
+`trace.Tracer`/`trace.Span` are minimal, dependency-free interfaces — implement
+them over OpenTelemetry, Langfuse or any backend. `SpanFromContext(ctx)` lets
+custom tools add their own spans inside the run.
+
 ### Guardrails
 
 ```go
@@ -197,8 +214,17 @@ mem := memory.NewVectorMemory(emb, memory.NewMemVectorStore(), 10, 3)
 a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithMemory(mem))
 ```
 
-No separate vector DB required: `MemVectorStore` is in-process. Swap in a
-pgvector/Qdrant adapter later by implementing `memory.VectorStore`.
+No separate vector DB required: `MemVectorStore` is in-process. For production
+scale, swap in the Qdrant adapter — a dependency-free REST client:
+
+```go
+q := memory.NewQdrantStore("http://localhost:6333", "my_collection").
+    WithAPIKey(os.Getenv("QDRANT_API_KEY")) // optional
+mem := memory.NewVectorMemory(emb, q, 10, 3)
+```
+
+Or implement `memory.VectorStore` yourself (pgvector, Pinecone, ...) — only two
+methods, both take a `context.Context`:
 
 ### MCP servers (stdio)
 
@@ -210,6 +236,18 @@ if err := cl.Start(ctx); err != nil { log.Fatal(err) }
 defer cl.Close()
 
 n, _ := cl.RegisterTo(reg, "filesystem") // tools: filesystem_read_file, ...
+```
+
+Remote MCP servers are also supported via the streamable HTTP transport
+(JSON-RPC 2.0 over HTTP, with session id + SSE responses):
+
+```go
+cl := mcp.NewHTTPClient("https://mcp.example.com/mcp").
+    WithAPIKey(os.Getenv("MCP_API_KEY")) // optional Bearer auth
+if err := cl.Start(ctx); err != nil { log.Fatal(err) }
+defer cl.Close()
+
+n, _ := cl.RegisterTo(reg, "remote") // tools: remote_get_weather, ...
 ```
 
 Or declaratively in `agents.yaml` (launched on boot, `${VAR}` env expansion):
@@ -285,6 +323,12 @@ Status:
 Next:
 
 - ✅ **MCP server support** — stdio client (`pkg/mcp`) + YAML config + tool prefixing
-- Tracing backend (OpenTelemetry / Langfuse)
-- pgvector / Qdrant adapter for `VectorStore`
-- SSE/HTTP MCP transport
+- ✅ **MCP streamable HTTP transport** — remote MCP servers over HTTP (session id + SSE), Bearer auth
+- ✅ **Qdrant adapter** — dependency-free REST `VectorStore` for `VectorMemory`
+- ✅ **Tracing** — minimal `trace.Tracer`/`Span` interface, console (JSON lines) + noop impls, wired into agent runs
+
+Future:
+
+- OpenTelemetry / Langfuse adapter for `trace.Tracer`
+- pgvector adapter for `VectorStore`
+- Streaming (SSE) responses from MCP HTTP servers (currently request/response only)

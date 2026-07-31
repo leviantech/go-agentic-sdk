@@ -227,7 +227,7 @@ func (c *Client) RegisterTo(reg *tools.Registry, prefix string) (int, error) {
 		if prefix != "" {
 			name = prefix + "_" + t.Name
 		}
-		if err := reg.Register(&mcpTool{client: c, method: t.Name, name: name, desc: t.Description, schema: t.InputSchema}); err != nil {
+		if err := reg.Register(&mcpTool{caller: c, method: t.Name, name: name, desc: t.Description, schema: t.InputSchema}); err != nil {
 			return 0, err
 		}
 	}

@@ -57,7 +57,7 @@ func (m *VectorMemory) Add(msg llm.Message) {
 			if err != nil {
 				continue
 			}
-			_ = m.store.Add(fmt.Sprintf("msg-%p-%d", m, i), vec, map[string]string{"content": old.Content})
+			_ = m.store.Add(context.Background(), fmt.Sprintf("msg-%p-%d", m, i), vec, map[string]string{"content": old.Content})
 		}
 	}
 }
@@ -72,7 +72,7 @@ func (m *VectorMemory) Messages() []llm.Message {
 	last := m.lastUserMessage()
 	if last != "" {
 		if vec, err := m.embedder.Embed(context.Background(), last); err == nil {
-			if hits, err := m.store.Search(vec, m.k); err == nil {
+			if hits, err := m.store.Search(context.Background(), vec, m.k); err == nil {
 				for _, h := range hits {
 					out = append(out, llm.Message{
 						Role:    llm.RoleSystem,

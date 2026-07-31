@@ -31,19 +31,19 @@ func TestMemVectorStoreSearch(t *testing.T) {
 
 	doc1, _ := e.Embed(ctx, "cara reset password akun")
 	doc2, _ := e.Embed(ctx, "invoice bulanan dan pembayaran")
-	if err := s.Add("1", doc1, map[string]string{"content": "reset password"}); err != nil {
+	if err := s.Add(ctx, "1", doc1, map[string]string{"content": "reset password"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Add("2", doc2, map[string]string{"content": "invoice"}); err != nil {
+	if err := s.Add(ctx, "2", doc2, map[string]string{"content": "invoice"}); err != nil {
 		t.Fatal(err)
 	}
 	// duplicate id must error
-	if err := s.Add("1", doc1, nil); err == nil {
+	if err := s.Add(ctx, "1", doc1, nil); err == nil {
 		t.Fatal("duplicate id must error")
 	}
 
 	q, _ := e.Embed(ctx, "cara reset password")
-	hits, err := s.Search(q, 1)
+	hits, err := s.Search(ctx, q, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

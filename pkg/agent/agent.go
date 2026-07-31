@@ -10,6 +10,7 @@ import (
 	"github.com/leviantech/go-agentic-sdk/pkg/llm"
 	"github.com/leviantech/go-agentic-sdk/pkg/memory"
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
+	"github.com/leviantech/go-agentic-sdk/pkg/trace"
 )
 
 // AgentConfig is the final configuration result (populated from options).
@@ -22,6 +23,7 @@ type AgentConfig struct {
 	MaxIterations int                 // default 8
 	Guardrails    []guardrails.Guardrail
 	Observers     []Observer
+	Tracer        trace.Tracer // optional; nil = no tracing
 }
 
 // Agent runs the agentic loop: think → call tool → execute → repeat.
@@ -76,6 +78,12 @@ func WithObserver(obs ...Observer) Option {
 	return func(a *Agent) { a.cfg.Observers = append(a.cfg.Observers, obs...) }
 }
 
+// WithTracer attaches a tracer; spans are recorded for agent.run,
+// llm.step and tool.call. Pass nil (or omit) to disable tracing.
+func WithTracer(t trace.Tracer) Option {
+	return func(a *Agent) { a.cfg.Tracer = t }
+}
+
 // Run executes one conversation turn from user input.
 // History is saved to memory so multi-turn conversations continue.
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
@@ -123,6 +131,11 @@ func (a *Agent) validateOutput(ctx context.Context, output string) error {
 }
 
 func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event)) (string, error) {
+	if a.cfg.Tracer != nil {
+		var span trace.Span
+		ctx, span = a.cfg.Tracer.Start(ctx, "agent.run")
+		defer span.End()
+	}
 	if err := a.validateInput(ctx, userInput); err != nil {
 		emit(Event{Type: EventRunError, Err: err})
 		return "", err
@@ -159,11 +172,20 @@ func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event))
 
 		for _, tc := range resp.ToolCalls {
 			emit(Event{Type: EventToolCall, Iteration: i, ToolCall: tc})
+			var toolSpan trace.Span
+			if a.cfg.Tracer != nil {
+				_, toolSpan = a.cfg.Tracer.Start(ctx, "tool.call")
+				toolSpan.SetAttribute("tool", tc.Name)
+			}
 			t, ok := byName[tc.Name]
 			if !ok {
 				res := fmt.Sprintf(`{"error": "tool %q is not registered"}`, tc.Name)
 				messages = append(messages, llm.ToolResultMessage(tc.ID, res))
 				emit(Event{Type: EventToolResult, Iteration: i, ToolCall: tc, Result: res})
+				if toolSpan != nil {
+					toolSpan.SetAttribute("error", "not registered")
+					toolSpan.End()
+				}
 				continue
 			}
 			var args map[string]any
@@ -171,14 +193,24 @@ func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event))
 				res := fmt.Sprintf(`{"error": "invalid arguments: %v"}`, err)
 				messages = append(messages, llm.ToolResultMessage(tc.ID, res))
 				emit(Event{Type: EventToolResult, Iteration: i, ToolCall: tc, Result: res})
+				if toolSpan != nil {
+					toolSpan.SetAttribute("error", err.Error())
+					toolSpan.End()
+				}
 				continue
 			}
 			res, err := t.Execute(ctx, args)
 			if err != nil {
 				res = fmt.Sprintf(`{"error": "%s"}`, err)
+				if toolSpan != nil {
+					toolSpan.SetAttribute("error", err.Error())
+				}
 			}
 			messages = append(messages, llm.ToolResultMessage(tc.ID, res))
 			emit(Event{Type: EventToolResult, Iteration: i, ToolCall: tc, Result: res})
+			if toolSpan != nil {
+				toolSpan.End()
+			}
 		}
 	}
 	err := fmt.Errorf("agent %q reached the %d iteration limit without a final answer",
@@ -189,6 +221,12 @@ func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event))
 
 // chatStep calls the LLM, using streaming when the provider supports it.
 func (a *Agent) chatStep(ctx context.Context, messages []llm.Message, emit func(Event), iter int) (llm.Message, error) {
+	var stepSpan trace.Span
+	if a.cfg.Tracer != nil {
+		ctx, stepSpan = a.cfg.Tracer.Start(ctx, "llm.step")
+		stepSpan.SetAttribute("iteration", itoa(iter))
+		defer stepSpan.End()
+	}
 	if sl, ok := a.cfg.LLM.(llm.StreamLLM); ok {
 		chunks, err := sl.ChatStream(ctx, messages, a.cfg.Tools)
 		if err != nil {
@@ -220,7 +258,22 @@ func (a *Agent) chatStep(ctx context.Context, messages []llm.Message, emit func(
 	return resp, nil
 }
 
-// DefaultSystemPrompt returns the built-in default prompt.
+// DefaultSystemPrompt returns the built-in base prompt.
 func DefaultSystemPrompt() string {
-	return "You are a helpful agent. Use available tools when needed to answer."
+	return "You are a helpful agent. Use the available tools when needed to answer."
+}
+
+// itoa is a tiny int→string helper (avoids strconv import for span attrs).
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
 }
