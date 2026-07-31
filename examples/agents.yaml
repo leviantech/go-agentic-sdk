@@ -1,0 +1,13 @@
+# YAML-based agent definition.
+# Environment variable expansion: ${VAR} (e.g. ${DATABASE_URL}).
+name: research-assistant
+description: Research assistant with skills from skills.sh.
+system_prompt: >
+  You are a research assistant. Answer in Indonesian.
+  Use the available tools when needed.
+max_iterations: 10
+skills:
+  # local skill folder
+  - path: examples/hello-skill
+  # skill from the skills.sh ecosystem (cloned + installed on boot)
+  - source: anthropics/skills/frontend-design

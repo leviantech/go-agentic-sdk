@@ -1,0 +1,14 @@
+# Binaries
+/agent-cli
+/agent
+
+# Installed skills (downloaded at runtime)
+/installed-skills/
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
