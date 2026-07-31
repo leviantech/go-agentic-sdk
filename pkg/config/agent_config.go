@@ -8,19 +8,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AgentConfig is an agent definition based on YAML (like agents.yaml).
+// AgentConfig is a YAML-based agent definition (like agents.yaml).
 type AgentConfig struct {
 	Name          string      `yaml:"name"`
 	Description   string      `yaml:"description"`
 	SystemPrompt  string      `yaml:"system_prompt"`
 	MaxIterations int         `yaml:"max_iterations"`
 	Skills        []SkillSpec `yaml:"skills"`
+	MCP           []MCPSpec   `yaml:"mcp"`
 }
 
-// SkillSpec declares a skill that must be installed when the agent boots.
+// SkillSpec declares a skill to install at agent boot.
 type SkillSpec struct {
 	Path   string `yaml:"path"`   // local skill folder (or clone result)
 	Source string `yaml:"source"` // git URL (alternative to path; e.g. .../tree/main/skills/foo)
+}
+
+// MCPSpec declares an MCP server (stdio) to launch at agent boot.
+type MCPSpec struct {
+	Name    string            `yaml:"name"`    // registry prefix for its tools
+	Command string            `yaml:"command"` // executable (e.g. npx)
+	Args    []string          `yaml:"args"`
+	Env     map[string]string `yaml:"env"`
 }
 
 // LoadAgentConfig reads an agent definition from a YAML file.

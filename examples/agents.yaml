@@ -11,3 +11,14 @@ skills:
   - path: examples/hello-skill
   # skill from the skills.sh ecosystem (cloned + installed on boot)
   - source: anthropics/skills/frontend-design
+
+# MCP servers (stdio) launched on boot; their tools are registered
+# with a <name>_ prefix. Requires the executable to be installed.
+# mcp:
+#   - name: filesystem
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+#   - name: mydb
+#     command: ./bin/mcp-mydb
+#     env:
+#       DATABASE_URL: "${DATABASE_URL}"

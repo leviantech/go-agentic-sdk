@@ -14,6 +14,7 @@ import (
 	"github.com/leviantech/go-agentic-sdk/pkg/agent"
 	"github.com/leviantech/go-agentic-sdk/pkg/config"
 	"github.com/leviantech/go-agentic-sdk/pkg/llm/openai"
+	"github.com/leviantech/go-agentic-sdk/pkg/mcp"
 	"github.com/leviantech/go-agentic-sdk/pkg/memory"
 	"github.com/leviantech/go-agentic-sdk/pkg/skills"
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
@@ -86,7 +87,33 @@ func main() {
 		}
 	}
 
-	// --- 4. Build agent ---
+	// --- 4. Launch MCP servers (from YAML config) ---
+	var mcpClients []*mcp.Client
+	if ac != nil {
+		for _, spec := range ac.MCP {
+			cl := mcp.NewStdioClient(spec.Command, spec.Args...)
+			if len(spec.Env) > 0 {
+				cl.WithEnv(spec.Env)
+			}
+			if err := cl.Start(ctx); err != nil {
+				log.Fatalf("mcp server %q: %v", spec.Name, err)
+			}
+			n, err := cl.RegisterTo(reg, spec.Name)
+			if err != nil {
+				_ = cl.Close()
+				log.Fatalf("mcp server %q: %v", spec.Name, err)
+			}
+			log.Printf("mcp server %q: registered %d tools", spec.Name, n)
+			mcpClients = append(mcpClients, cl)
+		}
+	}
+	defer func() {
+		for _, cl := range mcpClients {
+			_ = cl.Close()
+		}
+	}()
+
+	// --- 5. Build agent ---
 	basePrompt := agent.DefaultSystemPrompt()
 	if ac != nil {
 		basePrompt = ac.SystemPrompt
@@ -109,7 +136,7 @@ func main() {
 		log.Fatalf("agent: %v", err)
 	}
 
-	// --- 5. Run ---
+	// --- 6. Run ---
 	if *chatMode {
 		chat(ctx, a)
 		return

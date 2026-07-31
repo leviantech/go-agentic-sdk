@@ -19,8 +19,9 @@ go-agentic-sdk/
 │   ├── tools/
 │   │   ├── registry.go   # Tool interface + Registry
 │   │   └── builtin/      # built-in tools (get_current_time)
-│   ├── memory/           # multi-turn history: buffer, window, summarizer
+│   ├── memory/           # multi-turn history: buffer, window, summarizer, vector (RAG)
 │   ├── skills/           # ⭐ skill system: SKILL.md loader + installer (folder/git/skills.sh)
+│   ├── mcp/              # Model Context Protocol client (stdio, JSON-RPC) → tools
 │   ├── guardrails/       # rate limiter + content filter
 │   └── config/           # env config + YAML-based agent definitions
 ├── cmd/agent-cli/        # runner: single run / streaming / interactive chat
@@ -199,6 +200,31 @@ a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithMemory(mem))
 No separate vector DB required: `MemVectorStore` is in-process. Swap in a
 pgvector/Qdrant adapter later by implementing `memory.VectorStore`.
 
+### MCP servers (stdio)
+
+MCP server tools become ordinary SDK tools, registered with a `<name>_` prefix:
+
+```go
+cl := mcp.NewStdioClient("npx", "-y", "@modelcontextprotocol/server-filesystem", ".")
+if err := cl.Start(ctx); err != nil { log.Fatal(err) }
+defer cl.Close()
+
+n, _ := cl.RegisterTo(reg, "filesystem") // tools: filesystem_read_file, ...
+```
+
+Or declaratively in `agents.yaml` (launched on boot, `${VAR}` env expansion):
+
+```yaml
+mcp:
+  - name: filesystem
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+  - name: mydb
+    command: ./bin/mcp-mydb
+    env:
+      DATABASE_URL: "${DATABASE_URL}"
+```
+
 ## New LLM provider
 
 Implement one method:
@@ -230,11 +256,17 @@ Built-in protections:
 - **Size caps** — `SKILL.md` ≤ 1 MiB, total copy ≤ 50 MiB, script stdout ≤ 1 MiB.
 - **Script timeout** — 30s default when the caller provides no context deadline.
 - **skills.sh host allowlist** — only `skills.sh` and `github.com` URLs are accepted.
+- **MCP tool prefixing** — MCP tools are registered as `<server>_<tool>` to avoid
+  namespace collisions between servers.
 
 Inherent risks to know:
 
 - **Arbitrary code execution** — a skill's scripts run on your machine. A malicious
   skill can read files, send them anywhere, or delete data.
+- **MCP servers are arbitrary processes** — the `command`/`args` you configure are
+  launched with your privileges (e.g. `npx` downloads and runs packages). Launch
+  only servers you trust, and scope the server's access (filesystem root, DB
+  credentials, etc.).
 - **Prompt injection** — skill instructions are injected into the system prompt.
   An untrusted skill can try to override agent behavior. Do not grant the agent
   privileged tools (file write, shell, network) when using untrusted skills.
@@ -252,6 +284,7 @@ Status:
 
 Next:
 
-- MCP server support (`pkg/mcp`)
+- ✅ **MCP server support** — stdio client (`pkg/mcp`) + YAML config + tool prefixing
 - Tracing backend (OpenTelemetry / Langfuse)
 - pgvector / Qdrant adapter for `VectorStore`
+- SSE/HTTP MCP transport

@@ -57,6 +57,40 @@ func TestLoadAgentConfigDefault(t *testing.T) {
 	}
 }
 
+func TestLoadAgentConfigMCP(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agents.yaml")
+	yaml := `
+name: x
+mcp:
+  - name: filesystem
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    env:
+      TOKEN: "${TOKEN_VALUE}"
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKEN_VALUE", "abc")
+
+	ac, err := LoadAgentConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ac.MCP) != 1 {
+		t.Fatalf("expected 1 mcp server, got %d", len(ac.MCP))
+	}
+	s := ac.MCP[0]
+	if s.Name != "filesystem" || s.Command != "npx" || len(s.Args) != 3 {
+		t.Fatalf("mcp spec wrong: %+v", s)
+	}
+	if s.Env["TOKEN"] != "abc" {
+		t.Fatalf("env expansion failed: %+v", s.Env)
+	}
+}
+
+// TestExpandEnvTanpaVariabel verifies that missing variables are left as-is.
 func TestExpandEnvTanpaVariabel(t *testing.T) {
 	out := expandEnv([]byte("a=${TAK_ADA}b"))
 	if string(out) != "a=${TAK_ADA}b" {
