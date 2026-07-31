@@ -32,6 +32,13 @@ func SpanFromContext(ctx context.Context) Span {
 	return nil
 }
 
+// WithSpan returns a context carrying s, so nested spans created from it
+// (and SpanFromContext) can see the current span. Tracer implementations
+// should call it from Start.
+func WithSpan(ctx context.Context, s Span) context.Context {
+	return context.WithValue(ctx, spanCtxKey{}, s)
+}
+
 func withSpan(ctx context.Context, s Span) context.Context {
 	return context.WithValue(ctx, spanCtxKey{}, s)
 }

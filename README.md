@@ -170,6 +170,28 @@ a, _ := agent.NewAgent(
 them over OpenTelemetry, Langfuse or any backend. `SpanFromContext(ctx)` lets
 custom tools add their own spans inside the run.
 
+The included OpenTelemetry adapter lives in a separate subpackage
+(`pkg/trace/otel`) so the core stays dependency-free:
+
+```go
+import (
+    "github.com/leviantech/go-agentic-sdk/pkg/trace/otel"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+)
+
+exporter, _ := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint("localhost:4317"))
+tp := sdktrace.NewTracerProvider(
+    sdktrace.WithBatcher(exporter),
+    sdktrace.WithResource(resource.NewWithAttributes(
+        semconv.SchemaURL, semconv.ServiceNameKey.String("my-agent"))),
+)
+defer tp.Shutdown(ctx)
+
+tr := otel.NewTracer(tp, "my-agent")
+a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithTracer(tr))
+```
+
 ### Guardrails
 
 ```go
@@ -346,7 +368,8 @@ Next:
 - ✅ **Qdrant adapter** — dependency-free REST `VectorStore` for `VectorMemory`
 - ✅ **pgvector adapter** — `PGVectorStore` over any `*sql.DB` (cosine `<=>` scan, JSONB meta, schema bootstrap)
 - ✅ **Tracing** — minimal `trace.Tracer`/`Span` interface, console (JSON lines) + noop impls, wired into agent runs
+- ✅ **OpenTelemetry adapter** — `trace/otel` package; OTel spans for agent.run / llm.step / tool.call
 
 Future:
 
-- OpenTelemetry / Langfuse adapter for `trace.Tracer`
+- Langfuse adapter for `trace.Tracer`
