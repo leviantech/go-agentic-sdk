@@ -185,6 +185,20 @@ mem := memory.NewSummarizer(memory.NewConversationBuffer(), 10).
 a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithMemory(mem))
 ```
 
+### Vector memory (semantic retrieval)
+
+```go
+// Embedder: OpenAI-compatible — works with 9router (supports /v1/embeddings)
+emb := memory.NewOpenAIEmbedder(os.Getenv("EMBED_API_KEY"), "text-embedding-3-small").
+    WithBaseURL(os.Getenv("EMBED_BASE_URL")) // e.g. http://localhost:20128/v1
+
+mem := memory.NewVectorMemory(emb, memory.NewMemVectorStore(), 10, 3)
+a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithMemory(mem))
+```
+
+No separate vector DB required: `MemVectorStore` is in-process. Swap in a
+pgvector/Qdrant adapter later by implementing `memory.VectorStore`.
+
 ## New LLM provider
 
 Implement one method:
@@ -234,10 +248,10 @@ Status:
 - ✅ **Guardrails** — token-bucket rate limiter + content filter (substring or regex), input & output
 - ✅ **Summary memory** — `Window` (sliding) + `Summarizer` (compacts old messages, optional LLM callback)
 - ✅ **Multi-agent** — `agent.AsTool` wraps an agent as a callable tool (sub-agents)
+- ✅ **Vector memory** — semantic retrieval (RAG): `Embedder` + `VectorStore` interfaces, in-memory cosine store, OpenAI/9router embedder
 
 Next:
 
-- Vector store memory (RAG)
 - MCP server support (`pkg/mcp`)
 - Tracing backend (OpenTelemetry / Langfuse)
-- Agent CLI: YAML config via `-config` already works; add streaming output
+- pgvector / Qdrant adapter for `VectorStore`
