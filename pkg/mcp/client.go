@@ -52,6 +52,8 @@ type rpcError struct {
 // rpcMessage is an incoming JSON-RPC message (response or notification).
 type rpcMessage struct {
 	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
 	Error  *rpcError       `json:"error"`
 }

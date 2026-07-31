@@ -11,6 +11,13 @@ type toolCaller interface {
 	CallTool(ctx context.Context, name string, args map[string]any) (string, error)
 }
 
+// streamCaller is implemented by transports that support streaming tool
+// calls (HTTP streamable transport). Chunks arrive via onChunk (nil for a
+// non-streaming request); the accumulated result is still returned.
+type streamCaller interface {
+	StreamCall(ctx context.Context, name string, args map[string]any, onChunk func(string)) (string, error)
+}
+
 // mcpTool adapts an MCP server tool into a tools.Tool.
 // The registered name may carry a server prefix; the underlying MCP
 // method name is preserved for the actual call.
@@ -31,6 +38,9 @@ func (t *mcpTool) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 func (t *mcpTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	if sc, ok := t.caller.(streamCaller); ok {
+		return sc.StreamCall(ctx, t.method, args, nil)
+	}
 	return t.caller.CallTool(ctx, t.method, args)
 }
 

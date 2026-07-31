@@ -226,6 +226,15 @@ mem := memory.NewVectorMemory(emb, q, 10, 3)
 Or implement `memory.VectorStore` yourself (pgvector, Pinecone, ...) — only two
 methods, both take a `context.Context`:
 
+```go
+// pgvector adapter: bring your own *sql.DB (pgx, lib/pq, ...)
+db, _ := sql.Open("pgx", os.Getenv("DATABASE_URL"))
+pg := memory.NewPGVectorStore(db, "documents", 1536)
+_ = pg.EnsureSchema(ctx) // CREATE TABLE IF NOT EXISTS (needs pgvector ext)
+
+mem := memory.NewVectorMemory(emb, pg, 10, 3)
+```
+
 ### MCP servers (stdio)
 
 MCP server tools become ordinary SDK tools, registered with a `<name>_` prefix:
@@ -248,6 +257,15 @@ if err := cl.Start(ctx); err != nil { log.Fatal(err) }
 defer cl.Close()
 
 n, _ := cl.RegisterTo(reg, "remote") // tools: remote_get_weather, ...
+```
+
+Streaming tool calls are supported over the HTTP transport (`_meta.streaming`):
+partial content is delivered to a callback as it arrives:
+
+```go
+out, err := cl.StreamCall(ctx, "echo", args, func(chunk string) {
+    fmt.Print(chunk) // partial text, may fire many times
+})
 ```
 
 Or declaratively in `agents.yaml` (launched on boot, `${VAR}` env expansion):
@@ -324,11 +342,11 @@ Next:
 
 - ✅ **MCP server support** — stdio client (`pkg/mcp`) + YAML config + tool prefixing
 - ✅ **MCP streamable HTTP transport** — remote MCP servers over HTTP (session id + SSE), Bearer auth
+- ✅ **MCP streaming tool calls** — `_meta.streaming` + `message/mcp.streamMessage` partial content accumulation
 - ✅ **Qdrant adapter** — dependency-free REST `VectorStore` for `VectorMemory`
+- ✅ **pgvector adapter** — `PGVectorStore` over any `*sql.DB` (cosine `<=>` scan, JSONB meta, schema bootstrap)
 - ✅ **Tracing** — minimal `trace.Tracer`/`Span` interface, console (JSON lines) + noop impls, wired into agent runs
 
 Future:
 
 - OpenTelemetry / Langfuse adapter for `trace.Tracer`
-- pgvector adapter for `VectorStore`
-- Streaming (SSE) responses from MCP HTTP servers (currently request/response only)

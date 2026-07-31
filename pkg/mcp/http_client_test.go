@@ -158,6 +158,123 @@ func TestHTTPClientBearer(t *testing.T) {
 	}
 }
 
+// TestHTTPClientStreaming covers tools/call with _meta.streaming:
+// partial message/mcp.streamMessage events, progress notification skipped,
+// endOfStream flag, and chunk delivery.
+func TestHTTPClientStreaming(t *testing.T) {
+	var gotMeta bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     int            `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "tools/call" {
+			_, gotMeta = req.Params["_meta"].(map[string]any)
+			w.Header().Set("Content-Type", "text/event-stream")
+			chunk := func(text string) map[string]any {
+				return map[string]any{
+					"jsonrpc": "2.0", "method": "message/mcp.streamMessage",
+					"params": map[string]any{"message": map[string]any{
+						"jsonrpc": "2.0", "id": req.ID,
+						"result": map[string]any{"content": []any{
+							map[string]any{"type": "text", "text": text},
+						}},
+					}},
+				}
+			}
+			final := chunk("Hello, world")
+			final["params"].(map[string]any)["_meta"] = map[string]any{"endOfStream": true}
+			stream := []map[string]any{
+				// progress notification without id: must be skipped
+				{"jsonrpc": "2.0", "method": "notifications/progress",
+					"params": map[string]any{"progress": 0.5}},
+				chunk("Hel"),
+				chunk("Hello, "),
+				chunk("Hello, world"),
+				final,
+			}
+			for _, ev := range stream {
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", mustJSON(ev))
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		result := map[string]any{"protocolVersion": protocolVersion}
+		if req.Method == "tools/list" {
+			result = map[string]any{"tools": []any{}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}))
+	defer srv.Close()
+
+	cl := NewHTTPClient(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := cl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var chunks []string
+	out, err := cl.StreamCall(ctx, "echo", map[string]any{"x": 1}, func(c string) {
+		chunks = append(chunks, c)
+	})
+	if err != nil {
+		t.Fatalf("stream call: %v", err)
+	}
+	if !gotMeta {
+		t.Fatal("_meta.streaming not requested")
+	}
+	if out != "Hello, world" {
+		t.Fatalf("wrong result: %q", out)
+	}
+	joined := strings.Join(chunks, "")
+	if joined != "Hello, world" {
+		t.Fatalf("wrong chunks: %q", chunks)
+	}
+}
+
+// TestHTTPClientStreamingError verifies an isError stream result surfaces.
+func TestHTTPClientStreamingError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     int `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "tools/call" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", mustJSON(map[string]any{
+				"jsonrpc": "2.0", "method": "message/mcp.streamMessage",
+				"params": map[string]any{"_meta": map[string]any{"endOfStream": true},
+					"message": map[string]any{
+						"jsonrpc": "2.0", "id": req.ID,
+						"result": map[string]any{"isError": true, "content": []any{
+							map[string]any{"type": "text", "text": "boom"}}}}},
+			}))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		result := map[string]any{"protocolVersion": protocolVersion}
+		if req.Method == "tools/list" {
+			result = map[string]any{"tools": []any{}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}))
+	defer srv.Close()
+
+	cl := NewHTTPClient(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := cl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.StreamCall(ctx, "bad", map[string]any{}, func(string) {}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected tool error, got: %v", err)
+	}
+}
+
 func mustJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {

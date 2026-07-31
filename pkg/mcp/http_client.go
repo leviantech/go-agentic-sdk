@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -106,7 +107,21 @@ func (h *HTTPClient) ListTools(ctx context.Context) ([]Tool, error) {
 
 // CallTool invokes a tool and returns the concatenated text content.
 func (h *HTTPClient) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
-	raw, err := h.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
+	return h.StreamCall(ctx, name, args, nil)
+}
+
+// StreamCall invokes a tool, requesting a streaming response
+// (_meta.streaming per the 2025-06-18 spec). When the server streams,
+// partial text content is delivered to onChunk as it arrives (multiple
+// chunks per call are possible); the accumulated result is returned.
+// Servers without streaming support are handled via the normal
+// single-response path (onChunk is then called once).
+func (h *HTTPClient) StreamCall(ctx context.Context, name string, args map[string]any, onChunk func(string)) (string, error) {
+	params := map[string]any{"name": name, "arguments": args}
+	if onChunk != nil {
+		params["_meta"] = map[string]any{"streaming": true}
+	}
+	raw, err := h.callStream(ctx, "tools/call", params, onChunk)
 	if err != nil {
 		return "", err
 	}
@@ -154,6 +169,14 @@ func (h *HTTPClient) RegisterTo(reg *tools.Registry, prefix string) (int, error)
 }
 
 func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return h.callStream(ctx, method, params, nil)
+}
+
+// callStream is call, but with optional SSE streaming. When onChunk is set
+// and the server streams, message/mcp.streamMessage events are unwrapped and
+// accumulated; progress notifications are skipped. Without onChunk the
+// behaviour is identical to call.
+func (h *HTTPClient) callStream(ctx context.Context, method string, params any, onChunk func(string)) (json.RawMessage, error) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -171,22 +194,7 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 		h.dropPending(id)
 		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(data))
-	if err != nil {
-		h.dropPending(id)
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if h.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+h.apiKey)
-	}
-	if session != "" {
-		req.Header.Set("Mcp-Session-Id", session)
-	}
-
-	resp, err := h.client.Do(req)
+	resp, err := h.doRequest(ctx, data, session)
 	if err != nil {
 		h.dropPending(id)
 		return nil, err
@@ -208,6 +216,8 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 	ct := resp.Header.Get("Content-Type")
 	if strings.Contains(ct, "text/event-stream") {
 		// SSE: read events; deliver the JSON-RPC message inside each data line.
+		acc := map[int]string{}
+		isErr := false
 		sc := bufio.NewScanner(resp.Body)
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
@@ -218,9 +228,21 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 			if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &msg); err != nil {
 				continue
 			}
+			if msg.Method == "message/mcp.streamMessage" && onChunk != nil {
+				if end, errFlag := h.accumulate(acc, msg, onChunk); end {
+					isErr = errFlag
+					break
+				}
+				continue
+			}
 			if h.deliver(msg) {
 				break
 			}
+		}
+		if len(acc) > 0 {
+			// Streaming protocol: the accumulated content IS the result
+			// (delivered once, on endOfStream or when the stream ends).
+			h.deliver(h.accumResult(id, acc, isErr))
 		}
 	} else {
 		var msg rpcMessage
@@ -228,7 +250,14 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 			h.dropPending(id)
 			return nil, err
 		}
-		h.deliver(msg)
+		if msg.Method == "message/mcp.streamMessage" && onChunk != nil {
+			acc := map[int]string{}
+			if end, isErr := h.accumulate(acc, msg, onChunk); end {
+				h.deliver(h.accumResult(id, acc, isErr))
+			}
+		} else {
+			h.deliver(msg)
+		}
 	}
 
 	select {
@@ -240,6 +269,82 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// accumulate appends a partial text chunk from a message/mcp.streamMessage
+// event to the running buffers and reports the delta via onChunk. Text that
+// does not extend the buffer (full-replace servers) replaces it instead.
+// It returns whether the stream is finished (_meta.endOfStream) and the
+// isError flag carried by the final event.
+func (h *HTTPClient) accumulate(acc map[int]string, msg rpcMessage, onChunk func(string)) (end, isErr bool) {
+	// streamMessage envelope: params.message is a (partial) JSON-RPC message.
+	var inner struct {
+		Message struct {
+			Result struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		} `json:"message"`
+		Meta struct {
+			EndOfStream bool `json:"endOfStream"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal(msg.Params, &inner); err != nil {
+		return false, false
+	}
+	for i, part := range inner.Message.Result.Content {
+		if part.Type != "text" {
+			continue
+		}
+		cur := acc[i]
+		if strings.HasPrefix(part.Text, cur) && len(part.Text) > len(cur) {
+			delta := part.Text[len(cur):]
+			acc[i] = part.Text
+			onChunk(delta)
+		} else if part.Text != cur {
+			acc[i] = part.Text
+			onChunk(part.Text)
+		}
+	}
+	return inner.Meta.EndOfStream, inner.Message.Result.IsError
+}
+
+// accumResult builds a synthetic JSON-RPC response from accumulated
+// streamMessage content (sorted by content index) and delivers it.
+func (h *HTTPClient) accumResult(id int, acc map[int]string, isErr bool) rpcMessage {
+	idx := make([]int, 0, len(acc))
+	for i := range acc {
+		idx = append(idx, i)
+	}
+	sort.Ints(idx)
+	content := make([]map[string]any, 0, len(idx))
+	for _, i := range idx {
+		content = append(content, map[string]any{"type": "text", "text": acc[i]})
+	}
+	result, _ := json.Marshal(map[string]any{"content": content, "isError": isErr})
+	idRaw, _ := json.Marshal(id)
+	return rpcMessage{ID: idRaw, Result: result}
+}
+
+// doRequest builds and sends one JSON-RPC POST, sharing headers and the
+// session id handling between call and notify paths.
+func (h *HTTPClient) doRequest(ctx context.Context, data []byte, session string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if h.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.apiKey)
+	}
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
+	}
+	return h.client.Do(req)
 }
 
 // notify sends a JSON-RPC notification (no id) and drains the response.
