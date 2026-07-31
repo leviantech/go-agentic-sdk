@@ -33,7 +33,7 @@ func InstallFromSkillsSH(ctx context.Context, ref, destRoot string) ([]*Skill, e
 
 	repoURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 	if err := runGit(ctx, "clone", "--depth", "1", "--filter=blob:none", repoURL, tmp); err != nil {
-		return nil, fmt.Errorf("git clone gagal: %w", err)
+		return nil, fmt.Errorf("git clone failed: %w", err)
 	}
 
 	var dirs []string

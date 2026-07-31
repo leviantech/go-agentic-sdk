@@ -7,21 +7,23 @@ Structure follows production agent SDK patterns (pkg/ layout, Tool interface, fu
 ## Structure
 
 ```
-agentic-sdk/
+go-agentic-sdk/
 ├── pkg/
-│   ├── agent/            # agentic loop + functional options
+│   ├── agent/            # agentic loop, events, sub-agents + functional options
 │   ├── llm/
 │   │   ├── types.go      # Message, ToolCall, Role
 │   │   ├── llm.go        # LLM interface (other providers can implement it)
-│   │   ├── openai/       # OpenAI provider + compatible endpoints (Ollama/vLLM)
-│   │   └── mock/         # fake LLM for tests
+│   │   ├── stream.go     # optional StreamLLM interface (SSE streaming)
+│   │   ├── openai/       # OpenAI provider + compatible endpoints (Ollama/vLLM) + streaming
+│   │   └── mock/         # fake LLM for tests (sync + streaming)
 │   ├── tools/
 │   │   ├── registry.go   # Tool interface + Registry
 │   │   └── builtin/      # built-in tools (get_current_time)
-│   ├── memory/           # multi-turn conversation history
-│   ├── skills/           # ⭐ skill system: SKILL.md loader + installer
-│   ├── config/           # env config + YAML-based agent definitions
-├── cmd/agent-cli/        # runner: single run / interactive chat
+│   ├── memory/           # multi-turn history: buffer, window, summarizer
+│   ├── skills/           # ⭐ skill system: SKILL.md loader + installer (folder/git/skills.sh)
+│   ├── guardrails/       # rate limiter + content filter
+│   └── config/           # env config + YAML-based agent definitions
+├── cmd/agent-cli/        # runner: single run / streaming / interactive chat
 └── examples/
     ├── hello-skill/      # example skill (SKILL.md + scripts)
     └── agents.yaml       # example YAML agent definition
@@ -87,10 +89,10 @@ export OPENAI_MODEL=llama3.1
 
 ```go
 import (
-    "agentic-sdk/pkg/agent"
-    "agentic-sdk/pkg/llm/openai"
-    "agentic-sdk/pkg/skills"
-    "agentic-sdk/pkg/tools"
+    "github.com/leviantech/go-agentic-sdk/pkg/agent"
+    "github.com/leviantech/go-agentic-sdk/pkg/llm/openai"
+    "github.com/leviantech/go-agentic-sdk/pkg/skills"
+    "github.com/leviantech/go-agentic-sdk/pkg/tools"
 )
 
 ctx := context.Background()
@@ -98,10 +100,10 @@ ctx := context.Background()
 reg := tools.NewRegistry()
 // tool from code:
 _ = reg.Register(&tools.FuncTool{
-    N: "cek_stok",
+    N: "check_stock",
     D: "Check product stock.",
     S: map[string]any{"type": "object", "properties": map[string]any{}},
-    F: func(ctx context.Context, args map[string]any) (string, error) { return `{"stok":5}`, nil },
+    F: func(ctx context.Context, args map[string]any) (string, error) { return `{"stock":5}`, nil },
 })
 
 // install skill + register its tools:
@@ -120,7 +122,67 @@ a, _ := agent.NewAgent(
     agent.WithMaxIterations(10),
 )
 
-jawaban, err := a.Run(ctx, "how much stock of item X?")
+answer, err := a.Run(ctx, "how much stock of item X?")
+```
+
+### Streaming + observability
+
+```go
+ch, err := a.RunStream(ctx, "hello")
+for e := range ch {
+    switch e.Type {
+    case agent.EventLLMStep:
+        fmt.Print(e.Message.Content) // partial tokens
+    case agent.EventToolCall:
+        log.Printf("calling %s(%s)", e.ToolCall.Name, e.ToolCall.Arguments)
+    case agent.EventFinal:
+        fmt.Println(e.Message.Content)
+    }
+}
+```
+
+Or attach a passive observer (works for both `Run` and `RunStream`):
+
+```go
+a, _ = agent.NewAgent(
+    agent.WithLLM(...),
+    agent.WithObserver(agent.ObserverFunc(func(e agent.Event) {
+        log.Printf("%s iter=%d", e.Type, e.Iteration)
+    })),
+)
+```
+
+### Guardrails
+
+```go
+a, _ := agent.NewAgent(
+    agent.WithLLM(...),
+    agent.WithGuardrails(
+        guardrails.NewRateLimiter(10, 20),              // 10 req/s, burst 20
+        guardrails.NewContentFilter("secret", "re:\\d{16}"), // block sensitive content
+    ),
+)
+```
+
+### Sub-agents (multi-agent)
+
+```go
+sub, _ := agent.NewAgent(agent.WithLLM(subLLM))
+a, _ := agent.NewAgent(
+    agent.WithLLM(outerLLM),
+    agent.WithTools(agent.AsTool(sub, "research", "Delegate research tasks")),
+)
+```
+
+### Summary memory
+
+```go
+mem := memory.NewSummarizer(memory.NewConversationBuffer(), 10).
+    WithSummarizeFn(func(ctx context.Context, old []llm.Message) (string, error) {
+        // call an LLM to summarize old messages
+        return summarizeViaLLM(ctx, old)
+    })
+a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithMemory(mem))
 ```
 
 ## New LLM provider
@@ -165,8 +227,17 @@ Inherent risks to know:
 
 ## Roadmap
 
-- Streaming (`RunStream`, SSE)
-- Summary memory + vector store
-- Guardrails (rate limit, content filtering)
-- Observability (per-step loop tracing)
-- Multi-agent / sub-agents
+Status:
+
+- ✅ **Streaming** — `RunStream` + SSE (`llm.StreamLLM` interface; OpenAI provider implements it, others fall back to `Chat`)
+- ✅ **Observability** — `Event` + `Observer` on every step (input validation, LLM, tool call/result, final)
+- ✅ **Guardrails** — token-bucket rate limiter + content filter (substring or regex), input & output
+- ✅ **Summary memory** — `Window` (sliding) + `Summarizer` (compacts old messages, optional LLM callback)
+- ✅ **Multi-agent** — `agent.AsTool` wraps an agent as a callable tool (sub-agents)
+
+Next:
+
+- Vector store memory (RAG)
+- MCP server support (`pkg/mcp`)
+- Tracing backend (OpenTelemetry / Langfuse)
+- Agent CLI: YAML config via `-config` already works; add streaming output

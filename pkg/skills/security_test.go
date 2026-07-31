@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestNamaSkillPathTraversal memverifikasi nama skill jahat ditolak.
+// TestNamaSkillPathTraversal verifies that malicious skill names are rejected.
 func TestNamaSkillPathTraversal(t *testing.T) {
 	for _, name := range []string{"../../etc", "..", "../evil", "a/b", `a\b`, "a b", ".hidden", "-flag"} {
 		dir := t.TempDir()
@@ -17,26 +17,26 @@ func TestNamaSkillPathTraversal(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := LoadSkill(dir); err == nil {
-			t.Errorf("nama %q harus ditolak", name)
+			t.Errorf("name %q must be rejected", name)
 		}
 	}
 }
 
-// TestInstallDestContainment memastikan install tidak menulis ke luar destRoot.
+// TestInstallDestContainment ensures install never writes outside destRoot.
 func TestInstallDestContainment(t *testing.T) {
 	dest := t.TempDir()
-	// skill valid dengan nama aman
+	// a valid skill with a safe name
 	sk, err := InstallSkill(context.Background(), "../../examples/hello-skill", dest)
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	want := filepath.Join(dest, "hello-skill")
 	if sk.Path != want {
-		t.Fatalf("lokasi salah: %s", sk.Path)
+		t.Fatalf("wrong location: %s", sk.Path)
 	}
 }
 
-// TestCommandEscapeDitolak memverifikasi command di luar root skill ditolak.
+// TestCommandEscapeDitolak verifies that commands outside the skill root are rejected.
 func TestCommandEscapeDitolak(t *testing.T) {
 	sk, err := LoadSkill("../../examples/hello-skill")
 	if err != nil {
@@ -50,28 +50,28 @@ func TestCommandEscapeDitolak(t *testing.T) {
 		"../../../../etc/passwd",
 	} {
 		if _, err := sk.RunScript(context.Background(), cmd, map[string]any{}); err == nil {
-			t.Errorf("command %q harus ditolak", cmd)
+			t.Errorf("command %q must be rejected", cmd)
 		}
 	}
 }
 
-// TestSymlinkTidakDiikuti memastikan symlink dalam repo tidak ikut disalin.
+// TestSymlinkTidakDiikuti ensures symlinks inside a repo are not copied.
 func TestSymlinkTidakDiikuti(t *testing.T) {
 	src := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// SKILL.md valid
+	// a valid SKILL.md
 	skmd := "---\nname: symlink-skill\n---\n# x\n"
 	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte(skmd), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// file sensitif di luar src
+	// a sensitive file outside src
 	secret := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(secret, []byte("RAHASIA"), 0o644); err != nil {
+	if err := os.WriteFile(secret, []byte("SECRET"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// symlink di dalam repo menunjuk ke file rahasia
+	// a symlink inside the repo pointing to the secret file
 	if err := os.Symlink(secret, filepath.Join(src, "leak.txt")); err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +81,11 @@ func TestSymlinkTidakDiikuti(t *testing.T) {
 		t.Fatalf("install: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "symlink-skill", "leak.txt")); err == nil {
-		t.Fatal("symlink harus dilewati, tapi ikut tersalin")
+		t.Fatal("symlink must be skipped, but it was copied")
 	}
 }
 
-// TestSkillFileSizeCap memastikan SKILL.md raksasa ditolak.
+// TestSkillFileSizeCap ensures an oversized SKILL.md is rejected.
 func TestSkillFileSizeCap(t *testing.T) {
 	dir := t.TempDir()
 	huge := "---\nname: big\n---\n" + strings.Repeat("x", MaxSkillFileBytes+1)
@@ -93,11 +93,11 @@ func TestSkillFileSizeCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := LoadSkill(dir); err == nil {
-		t.Fatal("SKILL.md terlalu besar harus ditolak")
+		t.Fatal("oversized SKILL.md must be rejected")
 	}
 }
 
-// TestFrontmatterCRLF memastikan file Windows-style tetap ter-load.
+// TestFrontmatterCRLF ensures Windows-style files still load.
 func TestFrontmatterCRLF(t *testing.T) {
 	dir := t.TempDir()
 	content := "---\r\nname: crlf-skill\r\ndescription: tes\r\n---\r\n# Halo\r\n\r\ninstruksi\r\n"
@@ -106,22 +106,22 @@ func TestFrontmatterCRLF(t *testing.T) {
 	}
 	sk, err := LoadSkill(dir)
 	if err != nil {
-		t.Fatalf("CRLF frontmatter harus bisa di-load: %v", err)
+		t.Fatalf("CRLF frontmatter must load: %v", err)
 	}
 	if sk.Name != "crlf-skill" {
-		t.Fatalf("nama salah: %s", sk.Name)
+		t.Fatalf("wrong name: %s", sk.Name)
 	}
 	if !strings.Contains(sk.Instructions, "instruksi") {
-		t.Fatalf("body tidak termuat: %q", sk.Instructions)
+		t.Fatalf("body not loaded: %q", sk.Instructions)
 	}
 }
 
-// TestHostSkillsSHDitolak memverifikasi host selain skills.sh/github.com ditolak.
+// TestHostSkillsSHHostDitolak verifies hosts other than skills.sh/github.com are rejected.
 func TestHostSkillsSHHostDitolak(t *testing.T) {
 	if _, _, _, err := parseSkillsSHRef("https://evil.com/a/b"); err == nil {
-		t.Fatal("host asing harus ditolak")
+		t.Fatal("foreign host must be rejected")
 	}
 	if _, _, _, err := parseSkillsSHRef("https://github.com/ok/repo"); err != nil {
-		t.Fatalf("github.com harus diterima: %v", err)
+		t.Fatalf("github.com must be accepted: %v", err)
 	}
 }

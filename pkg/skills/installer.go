@@ -18,7 +18,7 @@ func InstallSkill(ctx context.Context, src, destRoot string) (*Skill, error) {
 		return nil, err
 	}
 	dest := filepath.Join(destRoot, fm.Name)
-	// Keamanan: pastikan tujuan tetap di dalam destRoot.
+	// Security: ensure the destination stays inside destRoot.
 	rootAbs, err := filepath.Abs(destRoot)
 	if err != nil {
 		return nil, err
@@ -81,13 +81,13 @@ func runGit(ctx context.Context, args ...string) error {
 	return nil
 }
 
-// maxCopyBytes membatasi total ukuran skill yang disalin (50 MiB).
+// maxCopyBytes caps the total size of a copied skill (50 MiB).
 const maxCopyBytes = 50 << 20
 
-// copyDir menyalin isi src ke dst dengan perlindungan keamanan:
-//   - symlink TIDAK diikuti (mencegah exfiltrasi file lokal via repo)
-//   - direktori .git dilewati
-//   - total byte dibatasi (maxCopyBytes)
+// copyDir copies src into dst with security protections:
+//   - symlinks are NOT followed (prevents exfiltrating local files via a repo)
+//   - .git directories are skipped
+//   - total bytes are capped (maxCopyBytes)
 func copyDir(ctx context.Context, src, dst string) error {
 	var copied int64
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
@@ -98,7 +98,7 @@ func copyDir(ctx context.Context, src, dst string) error {
 		if err != nil {
 			return err
 		}
-		// lewati .git dan artefak version-control lain
+		// skip .git and other version-control artifacts
 		for _, part := range strings.Split(rel, string(filepath.Separator)) {
 			if part == ".git" || part == ".hg" || part == ".svn" {
 				if d.IsDir() {

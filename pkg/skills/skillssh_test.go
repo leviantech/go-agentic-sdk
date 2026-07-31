@@ -54,7 +54,7 @@ func TestFindSkillDir(t *testing.T) {
 	}
 	mk("skills/foo", "---\nname: foo\n---\n")
 	mk("skills/bar", "---\nname: bar\n---\n")
-	// folder bernama sama tanpa SKILL.md harus diabaikan
+	// a folder with the same name but no SKILL.md must be ignored
 	if err := os.MkdirAll(filepath.Join(root, "skills/bar/baz"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +77,11 @@ func TestFindSkillDir(t *testing.T) {
 	}
 }
 
-// TestInstallFromSkillsSHLive memverifikasi install nyata dari ekosistem
-// skills.sh. Aktif hanya bila SKILLS_SH_LIVE_TEST=1 (butuh network).
+// TestInstallFromSkillsSHLive verifies a real install from the
+// skills.sh ecosystem. Only active when SKILLS_SH_LIVE_TEST=1 (needs network).
 func TestInstallFromSkillsSHLive(t *testing.T) {
 	if os.Getenv("SKILLS_SH_LIVE_TEST") == "" {
-		t.Skip("set SKILLS_SH_LIVE_TEST=1 untuk test install nyata")
+		t.Skip("set SKILLS_SH_LIVE_TEST=1 to run the live install test")
 	}
 	dest := t.TempDir()
 	skills, err := InstallFromSkillsSH(context.Background(),
