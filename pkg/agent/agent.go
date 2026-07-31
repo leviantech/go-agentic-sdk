@@ -21,7 +21,7 @@ type AgentConfig struct {
 	Tools         []tools.Tool
 	SystemPrompt  string
 	Name          string
-	MaxIterations int                 // default 8
+	MaxIterations int // default 8
 	Guardrails    []guardrails.Guardrail
 	Observers     []Observer
 	Tracer        trace.Tracer // optional; nil = no tracing

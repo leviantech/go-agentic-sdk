@@ -239,7 +239,7 @@ func TestHTTPClientStreaming(t *testing.T) {
 func TestHTTPClientStreamingError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			ID     int `json:"id"`
+			ID     int    `json:"id"`
 			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)

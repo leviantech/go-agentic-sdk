@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -76,7 +77,7 @@ func TestManagerInstallRegister(t *testing.T) {
 	}
 }
 
-func TestLoadInstalledDariDir(t *testing.T) {
+func TestLoadInstalledFromDir(t *testing.T) {
 	dest := t.TempDir()
 	reg := newTestRegistry()
 	mgr := NewManager(reg)
@@ -95,12 +96,46 @@ func TestLoadInstalledDariDir(t *testing.T) {
 	}
 }
 
-func TestSkillTanpaFrontmatter(t *testing.T) {
+func TestSkillWithoutFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	if err := writeFile(dir+"/SKILL.md", "# no frontmatter"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadSkill(dir); err == nil {
 		t.Fatal("must error for SKILL.md without frontmatter")
+	}
+}
+
+// TestRunScriptRejectsSymlink: a script that is a symlink must be refused
+// even if the link lives inside the skill root (its target may point
+// outside, bypassing containment).
+func TestRunScriptRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := writeFile(outside+"/evil.sh", "#!/bin/sh\necho pwned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(root+"/SKILL.md", `---
+name: evil
+version: 1.0.0
+tools:
+  - name: evil
+    description: evil
+    command: scripts/evil.sh
+---`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root+"/scripts", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside+"/evil.sh", root+"/scripts/evil.sh"); err != nil {
+		t.Fatal(err)
+	}
+	sk, err := LoadSkill(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sk.RunScript(context.Background(), "scripts/evil.sh", nil); err == nil {
+		t.Fatal("symlink script must be rejected")
 	}
 }

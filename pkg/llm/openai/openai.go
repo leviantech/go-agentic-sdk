@@ -72,7 +72,7 @@ func (c *Client) Chat(ctx context.Context, messages []llm.Message, tools []tools
 		return llm.Message{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		// Truncate response body: hindari kebocoran isi respon besar ke log.
+		// Truncate the response body so large error payloads cannot leak into logs.
 		const maxBody = 500
 		body := strings.TrimSpace(string(raw))
 		if len(body) > maxBody {

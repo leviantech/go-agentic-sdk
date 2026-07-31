@@ -55,7 +55,7 @@ func TestMemVectorStoreSearch(t *testing.T) {
 func TestVectorMemoryInjectsRelevant(t *testing.T) {
 	vm := NewVectorMemory(fakeEmbedder{}, NewMemVectorStore(), 2, 1)
 
-	// Isi history dulu (tanpa agent; langsung via Add).
+	// Seed history first (no agent; direct Add calls).
 	vm.Add(llm.Message{Role: llm.RoleUser, Content: "cerita tentang kopi aceh"})
 	vm.Add(llm.Message{Role: llm.RoleAssistant, Content: "kopi aceh itu enak"})
 	vm.Add(llm.Message{Role: llm.RoleUser, Content: "cerita tentang reset password"})

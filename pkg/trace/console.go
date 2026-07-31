@@ -18,7 +18,7 @@ func (NoopTracer) Start(ctx context.Context, _ string) (context.Context, Span) {
 // NoopSpan does nothing.
 type NoopSpan struct{}
 
-func (NoopSpan) End()                  {}
+func (NoopSpan) End()                     {}
 func (NoopSpan) SetAttribute(_, _ string) {}
 
 var _ Tracer = NoopTracer{}
@@ -31,9 +31,9 @@ var _ Span = NoopSpan{}
 //
 // Useful for local debugging and as a building block for real backends.
 type ConsoleTracer struct {
-	w    io.Writer
-	mu   sync.Mutex
-	now  func() time.Time
+	w   io.Writer
+	mu  sync.Mutex
+	now func() time.Time
 }
 
 func NewConsole(w io.Writer) *ConsoleTracer {

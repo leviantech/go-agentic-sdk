@@ -2,9 +2,37 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+// TestExecuteErrorIsValidJSON: error text with quotes/newlines must not
+// corrupt the JSON delivered to the LLM.
+func TestExecuteErrorIsValidJSON(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&FuncTool{
+		N: "fail",
+		F: func(_ context.Context, _ map[string]any) (string, error) {
+			return "", errBoom{}
+		},
+	})
+	res := r.Execute(context.Background(), "fail", "")
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(res), &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %s (%v)", res, err)
+	}
+	if parsed["error"] == "" {
+		t.Fatalf("error message lost: %+v", parsed)
+	}
+}
+
+type errBoom struct{}
+
+func (errBoom) Error() string {
+	return `boom "quoted" and
+newline`
+}
 
 func TestRegisterDupError(t *testing.T) {
 	r := NewRegistry()

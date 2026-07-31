@@ -16,10 +16,10 @@ type SummarizeFn func(ctx context.Context, msgs []llm.Message) (string, error)
 // SummarizeFn, or dropped when no function is set) and only the tail is kept.
 // The summary is re-injected as a system message on Messages().
 type Summarizer struct {
-	mu       sync.Mutex
-	inner    Memory
-	max      int
-	summary  string
+	mu        sync.Mutex
+	inner     Memory
+	max       int
+	summary   string
 	summarize SummarizeFn
 }
 

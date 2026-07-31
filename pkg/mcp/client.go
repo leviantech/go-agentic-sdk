@@ -60,10 +60,10 @@ type rpcMessage struct {
 
 // Client is a stdio MCP client wrapping a subprocess.
 type Client struct {
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	out     *bufio.Reader
-	stderr  *bytes.Buffer
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	out    *bufio.Reader
+	stderr *bytes.Buffer
 
 	mu      sync.Mutex
 	nextID  int

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 )
 
@@ -83,17 +82,27 @@ func (r *Registry) List() []Tool {
 func (r *Registry) Execute(ctx context.Context, name, argsJSON string) string {
 	t, ok := r.Get(name)
 	if !ok {
-		return fmt.Sprintf(`{"error": "tool %q not found"}`, name)
+		return errJSON(fmt.Sprintf("tool %q not found", name))
 	}
 	var args map[string]any
 	if argsJSON != "" {
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-			return fmt.Sprintf(`{"error": "invalid arguments: %v"}`, err)
+			return errJSON("invalid arguments: " + err.Error())
 		}
 	}
 	res, err := t.Execute(ctx, args)
 	if err != nil {
-		return fmt.Sprintf(`{"error": "%s"}`, strings.ReplaceAll(err.Error(), `"`, `'`))
+		return errJSON(err.Error())
 	}
 	return res
+}
+
+// errJSON wraps an arbitrary error message in a well-formed JSON object,
+// escaping quotes/newlines so the LLM always receives valid JSON.
+func errJSON(msg string) string {
+	b, err := json.Marshal(map[string]string{"error": msg})
+	if err != nil {
+		return `{"error":"tool failed"}`
+	}
+	return string(b)
 }

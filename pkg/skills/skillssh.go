@@ -61,8 +61,8 @@ func InstallFromSkillsSH(ctx context.Context, ref, destRoot string) ([]*Skill, e
 	return installed, nil
 }
 
-// allowedSkillHosts membatasi host yang boleh dipakai sebagai referensi
-// skills.sh (mencegah clone dari host sewenang-wenang).
+// allowedSkillHosts restricts which hosts may be used as skills.sh
+// references (prevents cloning from arbitrary hosts).
 var allowedSkillHosts = map[string]bool{
 	"www.skills.sh": true,
 	"skills.sh":     true,
@@ -96,7 +96,7 @@ func parseSkillsSHRef(ref string) (owner, repo, skill string, err error) {
 		return "", "", "", fmt.Errorf("reference %q must be owner/repo[/skill]", ref)
 	}
 	owner, repo = parts[0], parts[1]
-	// GitHub tree URLs: owner/repo/tree/<branch>/<path...> — pakai segmen path terakhir.
+	// GitHub tree URLs: owner/repo/tree/<branch>/<path...> — use the last path segment.
 	if len(parts) > 2 && parts[2] == "tree" {
 		skill = parts[len(parts)-1]
 	} else if len(parts) > 2 {

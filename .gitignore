@@ -12,3 +12,8 @@
 .idea/
 .vscode/
 *.swp
+
+graphify-out/
+
+# Local agent tooling
+.trae/

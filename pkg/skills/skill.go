@@ -25,29 +25,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Limits melindungi host dari skill yang tidak wajar.
+// Limits protect the host from misbehaving skills.
 const (
-	// MaxSkillFileBytes membatasi ukuran SKILL.md (1 MiB).
+	// MaxSkillFileBytes caps the SKILL.md size (1 MiB).
 	MaxSkillFileBytes = 1 << 20
-	// MaxScriptOutputBytes membatasi output script per pemanggilan tool (1 MiB).
+	// MaxScriptOutputBytes caps the script output per tool invocation (1 MiB).
 	MaxScriptOutputBytes = 1 << 20
-	// ScriptTimeout adalah timeout default tiap eksekusi tool (30 dtk)
-	// bila context pemanggil tidak punya deadline.
+	// ScriptTimeout is the default per-tool execution timeout (30s) used
+	// when the calling context has no deadline.
 	ScriptTimeout = 30 * time.Second
 )
 
-// skillNameRe membatasi nama skill: aman untuk path + nama registry.
+// skillNameRe constrains skill names: safe for both paths and registry names.
 var skillNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// ErrUnsafeSkillName menandakan nama skill mengandung path traversal.
+// ErrUnsafeSkillName signals a skill name with path traversal.
 var ErrUnsafeSkillName = errors.New("skill name is not safe for a filesystem path")
 
 // ToolSpec defines a tool provided by a skill.
 type ToolSpec struct {
 	Name        string         `yaml:"name"`
 	Description string         `yaml:"description"`
-	Command     string         `yaml:"command"`     // script path relative to the skill root
-	Parameters  map[string]any `yaml:"parameters"`  // JSON Schema
+	Command     string         `yaml:"command"`    // script path relative to the skill root
+	Parameters  map[string]any `yaml:"parameters"` // JSON Schema
 }
 
 // frontmatter is the skill metadata from the ---...--- block of SKILL.md.
@@ -103,8 +103,8 @@ func parseSkillFile(path string) (frontmatter, string, error) {
 	if fm.Name == "" {
 		return fm, "", fmt.Errorf("frontmatter in %s must have a name field", path)
 	}
-	// Keamanan: nama skill dipakai sebagai nama direktori tujuan install.
-	// Tolak path traversal (../../), separator, dan karakter aneh.
+	// Security: the skill name becomes the install destination folder name.
+	// Reject path traversal (../../), separators, and other odd characters.
 	if !skillNameRe.MatchString(fm.Name) {
 		return fm, "", fmt.Errorf("%w: %q", ErrUnsafeSkillName, fm.Name)
 	}
@@ -131,9 +131,9 @@ func splitFrontmatter(raw []byte) (string, string) {
 // JSON arguments are sent via stdin; stdout becomes the tool result;
 // stderr is attached to the error message.
 //
-// Keamanan: command wajib merujuk ke file di dalam root skill
-// (path absolut dan ".." ditolak), sehingga skill tidak bisa
-// menjalankan executable di luar direktori sendiri.
+// Security: the command must reference a file inside the skill root
+// (absolute paths and ".." are rejected), so a skill cannot execute an
+// executable outside its own directory.
 func (s *Skill) RunScript(ctx context.Context, command string, args map[string]any) (string, error) {
 	abs, err := s.resolveScript(command)
 	if err != nil {
@@ -145,7 +145,7 @@ func (s *Skill) RunScript(ctx context.Context, command string, args map[string]a
 		return "", err
 	}
 
-	// Timeout default bila pemanggil tidak memberi deadline.
+	// Default timeout when the caller provides no deadline.
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, ScriptTimeout)
@@ -165,9 +165,9 @@ func (s *Skill) RunScript(ctx context.Context, command string, args map[string]a
 	return strings.TrimSpace(out.String()), nil
 }
 
-// resolveScript mengonversi nilai field command ke path absolut yang
-// dijamin berada di dalam root skill. Path absolut dan traversal ".."
-// dari sisi user (frontmatter skill) ditolak.
+// resolveScript converts a command field value into an absolute path
+// guaranteed to live inside the skill root. Absolute paths and ".."
+// traversal supplied by the skill frontmatter are rejected.
 func (s *Skill) resolveScript(command string) (string, error) {
 	clean := filepath.Clean(command)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -182,13 +182,19 @@ func (s *Skill) resolveScript(command string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Containment: pastikan hasil resolve masih di dalam root skill.
+	// Containment: ensure the resolved path stays inside the skill root.
 	if abs != rootAbs && !strings.HasPrefix(abs, rootAbs+string(filepath.Separator)) {
 		return "", fmt.Errorf("command %q escapes the skill directory", command)
 	}
-	info, err := os.Stat(abs)
+	// Reject symlinks: a script that is a link could point outside the
+	// skill root, defeating the containment check above. This mirrors the
+	// no-symlink rule used during install (copyDir).
+	info, err := os.Lstat(abs)
 	if err != nil {
 		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("command %q must not be a symlink", command)
 	}
 	if info.IsDir() {
 		return "", fmt.Errorf("command %q is a directory, not an executable", command)
@@ -196,7 +202,7 @@ func (s *Skill) resolveScript(command string) (string, error) {
 	return abs, nil
 }
 
-// limitedWriter membatasi jumlah byte yang ditulis (cap output tool).
+// limitedWriter caps the number of bytes written (tool output limit).
 type limitedWriter struct {
 	w   *bytes.Buffer
 	max int

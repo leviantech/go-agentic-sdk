@@ -8,9 +8,9 @@ import (
 
 // Window keeps only the last N messages (sliding window).
 type Window struct {
-	mu  sync.Mutex
+	mu   sync.Mutex
 	msgs []llm.Message
-	max int
+	max  int
 }
 
 func NewWindow(max int) *Window {

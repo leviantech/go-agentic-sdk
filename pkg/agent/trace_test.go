@@ -12,7 +12,7 @@ import (
 
 // fakeTracer records started and ended span names.
 type fakeTracer struct {
-	mu     sync.Mutex
+	mu      sync.Mutex
 	started []string
 	ended   []string
 	attrs   map[string]map[string]string // span name → attrs

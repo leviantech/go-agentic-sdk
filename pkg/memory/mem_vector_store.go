@@ -11,9 +11,9 @@ import (
 // Fine for small-to-medium corpora (SDK default); swap in a pgvector/
 // Qdrant adapter for production scale.
 type MemVectorStore struct {
-	mu   sync.RWMutex
-	next int
-	ids  map[string]bool
+	mu    sync.RWMutex
+	next  int
+	ids   map[string]bool
 	items []memItem
 }
 

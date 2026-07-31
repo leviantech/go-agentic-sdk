@@ -107,7 +107,7 @@ func copyDir(ctx context.Context, src, dst string) error {
 				return nil
 			}
 		}
-		// jangan ikuti symlink apa pun (file maupun dir)
+		// never follow symlinks (files or directories)
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
