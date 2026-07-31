@@ -39,13 +39,6 @@ var _ trace.Span = (*spySpan)(nil)
 
 type spySpanKey struct{}
 
-func spySpanFrom(ctx context.Context) *spySpan {
-	if sp, ok := ctx.Value(spySpanKey{}).(*spySpan); ok {
-		return sp
-	}
-	return nil
-}
-
 // echoHandler returns a test handler that echoes tools/call and responds
 // to tools/list/initialize with a dummy tool.
 func echoHandler(t *testing.T) http.HandlerFunc {

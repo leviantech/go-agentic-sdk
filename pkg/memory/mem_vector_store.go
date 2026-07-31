@@ -12,7 +12,6 @@ import (
 // Qdrant adapter for production scale.
 type MemVectorStore struct {
 	mu    sync.RWMutex
-	next  int
 	ids   map[string]bool
 	items []memItem
 }

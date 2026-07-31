@@ -45,7 +45,7 @@ func (s *Stream) ChatStream(_ context.Context, _ []llm.Message, _ []tools.Tool) 
 			}}
 			return
 		}
-		for _, r := range []rune(s.FinalAnswer) {
+		for _, r := range s.FinalAnswer {
 			ch <- llm.StreamChunk{Content: string(r)}
 		}
 	}()

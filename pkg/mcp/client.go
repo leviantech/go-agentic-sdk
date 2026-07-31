@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
@@ -130,6 +131,11 @@ func (c *Client) Start(ctx context.Context) error {
 	c.out = bufio.NewReader(out)
 	c.stderr = &syncBuffer{}
 	c.cmd.Stderr = c.stderr // syncBuffer implements io.Writer
+	// Put the server in its own process group so Close() can kill the
+	// whole tree. Many MCP servers are launchers (npx, uvx, bunx) that
+	// spawn a child holding the stdout pipe; killing only the parent
+	// would leave the child alive and Process.Wait() would block forever.
+	c.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := c.cmd.Start(); err != nil {
 		return fmt.Errorf("start mcp server %q: %w (stderr: %s)",
@@ -144,7 +150,9 @@ func (c *Client) Start(ctx context.Context) error {
 	return nil
 }
 
-// Close terminates the server process.
+// Close terminates the server process (and its whole process group, so
+// wrapper commands like npx/uvx cannot leave orphan children holding the
+// stdout pipe). Best-effort and bounded: the wait is capped at 3s.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -158,8 +166,18 @@ func (c *Client) Close() error {
 		_ = c.stdin.Close()
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-		_, _ = c.cmd.Process.Wait()
+		// Kill the process group (negative pid) — the parent's kill
+		// alone leaves grandchildren alive.
+		_ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
+		done := make(chan struct{})
+		go func() {
+			_, _ = c.cmd.Process.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
 	}
 	return nil
 }
@@ -264,6 +282,7 @@ func (c *Client) RegisterTo(reg *tools.Registry, prefix string) (int, error) {
 
 // call sends a request and waits for its response.
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	// Allocate the id and register the waiter under the lock...
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -279,6 +298,9 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		c.mu.Unlock()
 		return nil, err
 	}
+	// ...but write the request *outside* the lock: a server that stops
+	// reading stdin would block this write forever and, with the lock
+	// held, deadlock the whole client (other calls, Close, deliver).
 	_, err = c.stdin.Write(append(data, '\n'))
 	c.mu.Unlock()
 	if err != nil {
@@ -308,10 +330,13 @@ func (c *Client) notify(method string, params any) {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return
 	}
+	c.mu.Unlock()
+	// Write outside the lock — same reason as call: a blocked write must
+	// not deadlock the client.
 	_, _ = c.stdin.Write(append(data, '\n'))
 }
 

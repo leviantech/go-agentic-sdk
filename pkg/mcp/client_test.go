@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -27,6 +29,21 @@ func serveFakeMCPServer() {
 		ID     int             `json:"id"`
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
+	}
+	// GO_WANT_HELPER_PROCESS=2: spawn a child (mode-3) that inherits
+	// stdout/stderr, then sleep — simulates a launcher like npx/uvx.
+	// The grandchild holds the pipe: killing only the parent would not
+	// release it. Process group kill must take both down.
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "2" {
+		child := exec.Command(os.Args[0], "-test.run=TestMCPHelperProcess")
+		child.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=3")
+		_ = child.Start()
+		time.Sleep(time.Hour)
+	}
+	// GO_WANT_HELPER_PROCESS=3: just sleep — holds stdout pipe open.
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "3" {
+		time.Sleep(time.Hour)
+		return
 	}
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
@@ -153,5 +170,40 @@ func TestStartGagal(t *testing.T) {
 	defer cancel()
 	if err := cl.Start(ctx); err == nil {
 		t.Fatal("must error")
+	}
+}
+
+// TestCloseKillsProcessGroup: Close() must kill the entire process group,
+// not just the direct child. Before the fix, a server process that forked
+// a child (common with npx/uvx launchers) would leave the child alive
+// holding the stdout pipe, and Process.Wait() would block forever.
+// This replicates that shape: the helper (mode 2) spawns a grandchild
+// (mode 3 = sleep forever) that inherits the stdout pipe, then sleeps.
+// Killing only the parent would hang Wait(); killing the group succeeds.
+func TestCloseKillsProcessGroup(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestMCPHelperProcess")
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=2")
+	// Grandchild inherits this pipe — the trap that made Wait() hang.
+	if _, err := cmd.StdoutPipe(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Give the helper time to spawn its grandchild.
+	time.Sleep(200 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		// Negative pid = the whole process group, matching Close().
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_, _ = cmd.Process.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// Good — grandchild was killed, pipe released, Wait returned.
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait() blocked for 5s — process group kill failed; grandchild still holds the pipe")
 	}
 }

@@ -15,6 +15,9 @@ type Chain []Guardrail
 
 func (c Chain) ValidateInput(ctx context.Context, input string) error {
 	for _, g := range c {
+		if g == nil {
+			continue
+		}
 		if err := g.ValidateInput(ctx, input); err != nil {
 			return err
 		}
@@ -24,6 +27,9 @@ func (c Chain) ValidateInput(ctx context.Context, input string) error {
 
 func (c Chain) ValidateOutput(ctx context.Context, output string) error {
 	for _, g := range c {
+		if g == nil {
+			continue
+		}
 		if err := g.ValidateOutput(ctx, output); err != nil {
 			return err
 		}
