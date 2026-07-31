@@ -46,11 +46,18 @@ func (s *MemVectorStore) Search(_ context.Context, vector []float32, k int) ([]V
 	}
 	hits := make([]VectorHit, 0, len(s.items))
 	for _, it := range s.items {
+		// Copy vector + meta so callers cannot mutate store internals.
+		vec := make([]float32, len(it.vector))
+		copy(vec, it.vector)
+		meta := make(map[string]string, len(it.meta))
+		for k, v := range it.meta {
+			meta[k] = v
+		}
 		hits = append(hits, VectorHit{
 			ID:     it.id,
 			Score:  cosine(it.vector, vector),
-			Meta:   it.meta,
-			Vector: it.vector,
+			Meta:   meta,
+			Vector: vec,
 		})
 	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })

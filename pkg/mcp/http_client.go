@@ -228,10 +228,11 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 	}
 
 	ct := resp.Header.Get("Content-Type")
+	delivered := false
+	acc := map[int]string{}
+	isErr := false
 	if strings.Contains(ct, "text/event-stream") {
 		// SSE: read events; deliver the JSON-RPC message inside each data line.
-		acc := map[int]string{}
-		isErr := false
 		sc := bufio.NewScanner(resp.Body)
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
@@ -253,18 +254,15 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 				// Not streaming: unwrap the inner message (it carries the
 				// real request id) and deliver it as a normal response.
 				if inner := unwrapStream(msg); inner != nil && h.deliver(*inner) {
+					delivered = true
 					break
 				}
 				continue
 			}
 			if h.deliver(msg) {
+				delivered = true
 				break
 			}
-		}
-		if len(acc) > 0 {
-			// Streaming protocol: the accumulated content IS the result
-			// (delivered once, on endOfStream or when the stream ends).
-			h.deliver(h.accumResult(id, acc, isErr))
 		}
 	} else {
 		var msg rpcMessage
@@ -274,16 +272,23 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 		}
 		if msg.Method == "message/mcp.streamMessage" {
 			if onChunk != nil {
-				acc := map[int]string{}
-				if end, isErr := h.accumulate(acc, msg, onChunk); end {
-					h.deliver(h.accumResult(id, acc, isErr))
-				}
+				h.accumulate(acc, msg, onChunk)
 			} else if inner := unwrapStream(msg); inner != nil {
-				h.deliver(*inner)
+				delivered = h.deliver(*inner)
 			}
 		} else {
-			h.deliver(msg)
+			delivered = h.deliver(msg)
 		}
+	}
+	if !delivered && len(acc) > 0 {
+		// Streaming protocol: the accumulated content IS the result.
+		// Deliver exactly once (after endOfStream or when the stream ends).
+		delivered = h.deliver(h.accumResult(id, acc, isErr))
+	}
+	if !delivered {
+		// No matching response arrived (server sent only notifications or
+		// closed early): release the pending slot so it cannot leak.
+		h.dropPending(id)
 	}
 
 	select {
@@ -293,6 +298,7 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 		}
 		return msg.Result, nil
 	case <-ctx.Done():
+		h.dropPending(id)
 		return nil, ctx.Err()
 	}
 }

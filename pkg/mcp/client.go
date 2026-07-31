@@ -92,6 +92,13 @@ func (c *Client) WithEnv(extra map[string]string) *Client {
 
 // Start launches the server process and performs the MCP initialize handshake.
 func (c *Client) Start(ctx context.Context) error {
+	// A server that never answers the handshake must not block forever:
+	// apply a default deadline when the caller passes a bare context.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+	}
 	in, err := c.cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -266,6 +273,11 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		}
 		return resp.Result, nil
 	case <-ctx.Done():
+		// Release the pending slot: a late response (if any) finds no
+		// waiter and is discarded instead of leaking the entry.
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return nil, ctx.Err()
 	}
 }
