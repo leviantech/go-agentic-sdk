@@ -192,6 +192,27 @@ tr := otel.NewTracer(tp, "my-agent")
 a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithTracer(tr))
 ```
 
+The Langfuse adapter (`pkg/trace/langfuse`) speaks the Langfuse REST ingestion
+API directly — no SDK dependency, works with Langfuse Cloud or self-hosted:
+
+```go
+import "github.com/leviantech/go-agentic-sdk/pkg/trace/langfuse"
+
+tr, _ := langfuse.New(langfuse.Config{
+    Host:          "https://cloud.langfuse.com", // self-host: your URL
+    PublicKey:     os.Getenv("LANGFUSE_PUBLIC_KEY"),
+    SecretKey:     os.Getenv("LANGFUSE_SECRET_KEY"),
+    FlushInterval: 2 * time.Second, // background flush
+})
+defer tr.Close()
+
+a, _ := agent.NewAgent(agent.WithLLM(...), agent.WithTracer(tr))
+```
+
+Root `agent.run` spans become Langfuse traces; `llm.step` spans with a `model`
+attribute are sent as generations (token/cost analytics); tool calls become
+child spans.
+
 ### Guardrails
 
 ```go
@@ -369,7 +390,8 @@ Next:
 - ✅ **pgvector adapter** — `PGVectorStore` over any `*sql.DB` (cosine `<=>` scan, JSONB meta, schema bootstrap)
 - ✅ **Tracing** — minimal `trace.Tracer`/`Span` interface, console (JSON lines) + noop impls, wired into agent runs
 - ✅ **OpenTelemetry adapter** — `trace/otel` package; OTel spans for agent.run / llm.step / tool.call
+- ✅ **Langfuse adapter** — `trace/langfuse` package; dependency-free REST ingestion (trace/span/generation events, batched + background flush)
 
 Future:
 
-- Langfuse adapter for `trace.Tracer`
+- OpenTelemetry instrumentation for MCP HTTP client (HTTP client spans)
