@@ -75,6 +75,23 @@ func TestQdrantErrorStatus(t *testing.T) {
 	}
 }
 
+func TestQdrantRejectsUnsafeCollection(t *testing.T) {
+	for _, bad := range []string{"../../admin", "a/b", "a b", "", "col\"", "col?x=1"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("must panic for collection %q", bad)
+				}
+			}()
+			NewQdrantStore("http://localhost:6333", bad)
+		}()
+	}
+	// valid names pass
+	for _, good := range []string{"docs", "my_collection", "A-B_c2"} {
+		NewQdrantStore("http://localhost:6333", good)
+	}
+}
+
 func TestQdrantAPIKey(t *testing.T) {
 	var gotKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

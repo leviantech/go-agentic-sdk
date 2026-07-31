@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -179,7 +180,7 @@ func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event))
 			}
 			t, ok := byName[tc.Name]
 			if !ok {
-				res := fmt.Sprintf(`{"error": "tool %q is not registered"}`, tc.Name)
+				res := toolError(`tool %q is not registered`, tc.Name)
 				messages = append(messages, llm.ToolResultMessage(tc.ID, res))
 				emit(Event{Type: EventToolResult, Iteration: i, ToolCall: tc, Result: res})
 				if toolSpan != nil {
@@ -190,7 +191,7 @@ func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event))
 			}
 			var args map[string]any
 			if err := unmarshalArgs(tc.Arguments, &args); err != nil {
-				res := fmt.Sprintf(`{"error": "invalid arguments: %v"}`, err)
+				res := toolError("invalid arguments: %v", err)
 				messages = append(messages, llm.ToolResultMessage(tc.ID, res))
 				emit(Event{Type: EventToolResult, Iteration: i, ToolCall: tc, Result: res})
 				if toolSpan != nil {
@@ -201,7 +202,7 @@ func (a *Agent) runOnce(ctx context.Context, userInput string, emit func(Event))
 			}
 			res, err := t.Execute(ctx, args)
 			if err != nil {
-				res = fmt.Sprintf(`{"error": "%s"}`, err)
+				res = toolError("%v", err)
 				if toolSpan != nil {
 					toolSpan.SetAttribute("error", err.Error())
 				}
@@ -256,6 +257,16 @@ func (a *Agent) chatStep(ctx context.Context, messages []llm.Message, emit func(
 	}
 	emit(Event{Type: EventLLMStep, Iteration: iter, Message: resp})
 	return resp, nil
+}
+
+// toolError builds a valid JSON error object for a tool result, escaping
+// arbitrary error text so the LLM always receives well-formed JSON.
+func toolError(format string, args ...any) string {
+	b, err := json.Marshal(map[string]string{"error": fmt.Sprintf(format, args...)})
+	if err != nil {
+		return `{"error":"tool failed"}`
+	}
+	return string(b)
 }
 
 // DefaultSystemPrompt returns the built-in base prompt.

@@ -2,12 +2,27 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/leviantech/go-agentic-sdk/pkg/llm"
 	"github.com/leviantech/go-agentic-sdk/pkg/llm/mock"
 	"github.com/leviantech/go-agentic-sdk/pkg/tools"
 )
+
+// TestToolErrorValidJSON: error text with quotes/newlines must still be
+// delivered as well-formed JSON to the LLM (no broken tool results).
+func TestToolErrorValidJSON(t *testing.T) {
+	res := toolError(`boom "quoted" and
+newline`)
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(res), &parsed); err != nil {
+		t.Fatalf("toolError output is not valid JSON: %s (%v)", res, err)
+	}
+	if parsed["error"] == "" {
+		t.Fatalf("error message lost: %+v", parsed)
+	}
+}
 
 // TestLoopEksekusiTool verifies the agentic loop:
 // round 1 the LLM requests a tool, the tool executes, the result is sent back,

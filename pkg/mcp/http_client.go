@@ -38,8 +38,12 @@ type HTTPClient struct {
 
 func NewHTTPClient(url string) *HTTPClient {
 	return &HTTPClient{
-		url:     url,
-		client:  &http.Client{Timeout: 60 * time.Second},
+		url: url,
+		// No client-level Timeout: for SSE streams the response body is
+		// read incrementally and a fixed timeout would kill long streams.
+		// The per-request context governs cancellation instead (a default
+		// deadline is applied in call when the caller provides none).
+		client:  &http.Client{},
 		pending: map[int]chan rpcMessage{},
 	}
 }
@@ -74,7 +78,9 @@ func (h *HTTPClient) Close() error {
 	h.closed = true
 	h.mu.Unlock()
 	if h.session != "" {
-		req, err := http.NewRequest(http.MethodDelete, h.url, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.url, nil)
 		if err == nil {
 			req.Header.Set("Mcp-Session-Id", h.session)
 			if h.apiKey != "" {
@@ -177,6 +183,14 @@ func (h *HTTPClient) call(ctx context.Context, method string, params any) (json.
 // accumulated; progress notifications are skipped. Without onChunk the
 // behaviour is identical to call.
 func (h *HTTPClient) callStream(ctx context.Context, method string, params any, onChunk func(string)) (json.RawMessage, error) {
+	// Guard against callers that pass a bare context: without a deadline a
+	// stuck server would block forever now that the client has no fixed
+	// timeout (required for long SSE streams).
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+	}
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -228,9 +242,17 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 			if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &msg); err != nil {
 				continue
 			}
-			if msg.Method == "message/mcp.streamMessage" && onChunk != nil {
-				if end, errFlag := h.accumulate(acc, msg, onChunk); end {
-					isErr = errFlag
+			if msg.Method == "message/mcp.streamMessage" {
+				if onChunk != nil {
+					if end, errFlag := h.accumulate(acc, msg, onChunk); end {
+						isErr = errFlag
+						break
+					}
+					continue
+				}
+				// Not streaming: unwrap the inner message (it carries the
+				// real request id) and deliver it as a normal response.
+				if inner := unwrapStream(msg); inner != nil && h.deliver(*inner) {
 					break
 				}
 				continue
@@ -250,10 +272,14 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 			h.dropPending(id)
 			return nil, err
 		}
-		if msg.Method == "message/mcp.streamMessage" && onChunk != nil {
-			acc := map[int]string{}
-			if end, isErr := h.accumulate(acc, msg, onChunk); end {
-				h.deliver(h.accumResult(id, acc, isErr))
+		if msg.Method == "message/mcp.streamMessage" {
+			if onChunk != nil {
+				acc := map[int]string{}
+				if end, isErr := h.accumulate(acc, msg, onChunk); end {
+					h.deliver(h.accumResult(id, acc, isErr))
+				}
+			} else if inner := unwrapStream(msg); inner != nil {
+				h.deliver(*inner)
 			}
 		} else {
 			h.deliver(msg)
@@ -269,6 +295,18 @@ func (h *HTTPClient) callStream(ctx context.Context, method string, params any, 
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// unwrapStream extracts the inner JSON-RPC message from a
+// message/mcp.streamMessage notification (params.message).
+func unwrapStream(msg rpcMessage) *rpcMessage {
+	var inner struct {
+		Message *rpcMessage `json:"message"`
+	}
+	if err := json.Unmarshal(msg.Params, &inner); err != nil || inner.Message == nil {
+		return nil
+	}
+	return inner.Message
 }
 
 // accumulate appends a partial text chunk from a message/mcp.streamMessage
@@ -361,7 +399,9 @@ func (h *HTTPClient) notify(method string, params any) {
 	session := h.session
 	h.mu.Unlock()
 
-	req, err := http.NewRequest(http.MethodPost, h.url, bytes.NewReader(data))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(data))
 	if err != nil {
 		return
 	}

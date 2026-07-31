@@ -275,6 +275,127 @@ func TestHTTPClientStreamingError(t *testing.T) {
 	}
 }
 
+// TestHTTPClientStreamMessageSingleJSON: a server that wraps a normal
+// response inside message/mcp.streamMessage (single JSON, no SSE) must
+// still work for plain CallTool — the inner message is unwrapped.
+func TestHTTPClientStreamMessageSingleJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "tools/call" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0", "method": "message/mcp.streamMessage",
+				"params": map[string]any{"_meta": map[string]any{"endOfStream": true},
+					"message": map[string]any{
+						"jsonrpc": "2.0", "id": req.ID,
+						"result": map[string]any{"content": []any{
+							map[string]any{"type": "text", "text": "wrapped"}}}}},
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		result := map[string]any{"protocolVersion": protocolVersion}
+		if req.Method == "tools/list" {
+			result = map[string]any{"tools": []any{}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}))
+	defer srv.Close()
+
+	cl := NewHTTPClient(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := cl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cl.CallTool(ctx, "ping", map[string]any{})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if out != "wrapped" {
+		t.Fatalf("wrong result: %q", out)
+	}
+}
+
+// TestHTTPClientNoClientTimeout: long SSE streams must not be killed by a
+// fixed client timeout (the 60s client-level Timeout was removed).
+func TestHTTPClientNoClientTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "tools/call" {
+			fl := w.(http.Flusher)
+			w.Header().Set("Content-Type", "text/event-stream")
+			// two chunks separated by >1s: would be cut by any
+			// fixed sub-2s client timeout
+			fmt.Fprintf(w, "data: %s\n\n", mustJSON(map[string]any{
+				"jsonrpc": "2.0", "method": "message/mcp.streamMessage",
+				"params": map[string]any{"message": map[string]any{
+					"jsonrpc": "2.0", "id": req.ID,
+					"result": map[string]any{"content": []any{
+						map[string]any{"type": "text", "text": "slow"}}}}}}))
+			fl.Flush()
+			time.Sleep(1500 * time.Millisecond)
+			fmt.Fprintf(w, "data: %s\n\n", mustJSON(map[string]any{
+				"jsonrpc": "2.0", "method": "message/mcp.streamMessage",
+				"params": map[string]any{"_meta": map[string]any{"endOfStream": true},
+					"message": map[string]any{
+						"jsonrpc": "2.0", "id": req.ID,
+						"result": map[string]any{"content": []any{
+							map[string]any{"type": "text", "text": "slowpoke"}}}}}}))
+			fl.Flush()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		result := map[string]any{"protocolVersion": protocolVersion}
+		if req.Method == "tools/list" {
+			result = map[string]any{"tools": []any{}}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}))
+	defer srv.Close()
+
+	cl := NewHTTPClient(srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := cl.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cl.StreamCall(ctx, "slow", map[string]any{}, func(string) {})
+	if err != nil {
+		t.Fatalf("stream call: %v", err)
+	}
+	if out != "slowpoke" {
+		t.Fatalf("wrong result: %q", out)
+	}
+}
+
+// TestUnwrapStream covers the params.message extraction used by both
+// transports when a server wraps responses in streamMessage.
+func TestUnwrapStream(t *testing.T) {
+	msg := rpcMessage{
+		Method: "message/mcp.streamMessage",
+		Params: json.RawMessage(`{"message":{"jsonrpc":"2.0","id":7,"result":{"content":[]}}}`),
+	}
+	inner := unwrapStream(msg)
+	if inner == nil || string(inner.ID) != "7" {
+		t.Fatalf("unwrap failed: %+v", inner)
+	}
+	if u := unwrapStream(rpcMessage{Method: "message/mcp.streamMessage", Params: json.RawMessage(`{}`)}); u != nil {
+		t.Fatalf("empty params must unwrap to nil, got %+v", u)
+	}
+	if u := unwrapStream(rpcMessage{Method: "tools/call", Params: json.RawMessage(`{}`)}); u != nil {
+		t.Fatalf("non-streamMessage must unwrap to nil")
+	}
+}
+
 func mustJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {

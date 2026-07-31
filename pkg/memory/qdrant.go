@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,7 +23,14 @@ type QdrantStore struct {
 	client     *http.Client
 }
 
+// collectionNameRe mirrors Qdrant's own collection name rules. Anything
+// else could smuggle path segments into the request URL.
+var collectionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,255}$`)
+
 func NewQdrantStore(baseURL, collection string) *QdrantStore {
+	if !collectionNameRe.MatchString(collection) {
+		panic(fmt.Sprintf("memory: invalid qdrant collection name %q", collection))
+	}
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL += "/"
 	}

@@ -296,6 +296,12 @@ func (c *Client) readLoop() {
 		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
+		if msg.Method == "message/mcp.streamMessage" {
+			// Unwrap: the inner message carries the real request id.
+			if inner := unwrapStream(msg); inner != nil {
+				msg = *inner
+			}
+		}
 		if len(msg.ID) == 0 || string(msg.ID) == "null" {
 			continue // notification
 		}
